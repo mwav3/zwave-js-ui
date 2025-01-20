@@ -72,11 +72,12 @@
 	background: #ccccccaa;
 	border: 2px solid black;
 	border-radius: 20px;
-	max-width: 400px;
+	max-width: 500px;
 	z-index: 1;
 	max-height: 80vh;
 	overflow-y: scroll;
 	overflow-x: hidden;
+	cursor: move;
 }
 
 .details::-webkit-scrollbar {
@@ -113,6 +114,23 @@ export default {
 	},
 	methods: {
 		...mapActions(useBaseStore, ['showSnackbar', 'setNeighbors']),
+		setInitialPosition(element) {
+			const windowHeight = window.innerHeight
+			const windowWidth = window.innerWidth
+
+			const popupHeight = element.offsetHeight
+			const popupWidth = element.offsetWidth
+
+			// Set initial position (e.g., center of the window)
+			let initialTop = (windowHeight - popupHeight) / 2 - 50
+			let initialLeft = (windowWidth - popupWidth) / 10
+
+			if (initialTop < 0) initialTop = 10
+			if (initialLeft < 0) initialLeft = 10
+
+			element.style.top = initialTop + 'px'
+			element.style.left = initialLeft + 'px'
+		},
 		makeDivDraggable() {
 			const elmnt = document.getElementById('properties')
 
@@ -126,6 +144,10 @@ export default {
 			}
 
 			elmnt.setAttribute('data-draggable', true)
+
+			setTimeout(() => {
+				this.setInitialPosition(elmnt)
+			}, 100)
 
 			let startX = 0
 			let startY = 0

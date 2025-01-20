@@ -168,6 +168,8 @@ export default {
 			const channel0 = [[], []]
 			const channel1 = [[], []]
 			const channel2 = [[], []]
+			const channel3 = [[], []]
+
 			if (this.node.bgRSSIPoints && this.node.bgRSSIPoints.length > 0) {
 				this.node.bgRSSIPoints.forEach((point) => {
 					timestamps.push(point.timestamp / 1000)
@@ -179,14 +181,30 @@ export default {
 						this.checkRssiError(point.channel1.current),
 					)
 					channel1[1].push(point.channel1.average)
-					channel2[0].push(
-						this.checkRssiError(point.channel2?.current),
-					)
-					channel2[1].push(point.channel2?.average)
+
+					if (point.channel2) {
+						channel2[0].push(
+							this.checkRssiError(point.channel2.current),
+						)
+						channel2[1].push(point.channel2.average)
+					}
+
+					if (point.channel3) {
+						channel3[0].push(
+							this.checkRssiError(point.channel3.current),
+						)
+						channel3[1].push(point.channel3.average)
+					}
 				})
 			}
 
-			return [timestamps, ...channel0, ...channel1, ...channel2]
+			return [
+				timestamps,
+				...channel0,
+				...channel1,
+				...channel2,
+				...channel3,
+			]
 		},
 	},
 	watch: {
@@ -244,7 +262,7 @@ export default {
 				// in-legend display
 				label: '',
 				value: (self, rawValue) =>
-					rawValue ? rawValue.toFixed(2) + ' dBm' : '----- dBm',
+					rawValue ? rawValue.toFixed(2) + ' dBm' : '---',
 				// series style
 				stroke: 'red',
 				width: 1,
@@ -296,11 +314,13 @@ export default {
 				this.ro.observe(container)
 			}
 
+			const width = this.$parent.$el.offsetWidth
+
 			const opts = {
 				title: 'Background RSSI',
 				// class: "my-chart",
-				width: 400,
-				height: 400,
+				width,
+				height: 500,
 				plugins: [touchZoomPlugin()],
 				axes: [
 					{
@@ -333,6 +353,14 @@ export default {
 							label: 'Channel 2',
 							stroke: '#ffa600',
 							fill: 'rgba(255, 166, 0, 0.35)',
+						},
+						1,
+					),
+					...this.createSerie(
+						{
+							label: 'Channel 3',
+							stroke: '#003f5c',
+							fill: 'rgba(0, 63, 92, 0.35)',
 						},
 						1,
 					),

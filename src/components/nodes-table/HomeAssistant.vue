@@ -100,10 +100,23 @@
 						{{ item.object_id }}
 					</template>
 					<template v-slot:[`item.persistent`]="{ item }">
-						{{ item.persistent ? 'Yes' : 'No' }}
+						<v-checkbox
+							v-model="item.persistent"
+							@click.stop
+							@change="updateDevice(item)"
+							hide-details
+							dense
+						></v-checkbox>
 					</template>
 					<template v-slot:[`item.ignoreDiscovery`]="{ item }">
-						{{ item.ignoreDiscovery ? 'Disabled' : 'Enabled' }}
+						<v-btn
+							@click.stop="toggleField(item, 'ignoreDiscovery')"
+							:color="item.ignoreDiscovery ? 'error' : 'success'"
+							rounded
+							x-small
+						>
+							{{ item.ignoreDiscovery ? 'Disabled' : 'Enabled' }}
+						</v-btn>
 					</template>
 				</v-data-table>
 			</v-col>
@@ -115,7 +128,7 @@
 							color="blue darken-1"
 							:disabled="errorDevice"
 							text
-							@click="addDevice"
+							@click="addDevice()"
 							>Add</v-btn
 						>
 					</template>
@@ -129,7 +142,7 @@
 							color="blue darken-1"
 							:disabled="errorDevice"
 							text
-							@click="updateDevice"
+							@click="updateDeviceJSON()"
 							>Update</v-btn
 						>
 					</template>
@@ -185,12 +198,14 @@
 import { inboundEvents as socketActions } from '@server/lib/SocketEvents'
 import { mapActions, mapState } from 'pinia'
 import useBaseStore from '../../stores/base'
+import InstancesMixin from '../../mixins/InstancesMixin'
 
 export default {
 	props: {
 		node: Object,
 		socket: Object,
 	},
+	mixins: [InstancesMixin],
 	data() {
 		return {
 			deviceJSON: '',
@@ -276,7 +291,7 @@ export default {
 			const device = this.selectedDevice
 			if (
 				device &&
-				(await this.$listeners.showConfirm(
+				(await this.app.confirm(
 					'Attention',
 					'Are you sure you want to delete selected device?',
 					'alert',
@@ -296,7 +311,7 @@ export default {
 		async disableDiscovery() {
 			if (
 				this.node &&
-				(await this.$listeners.showConfirm(
+				(await this.app.confirm(
 					'Rediscover node',
 					'Are you sure you want to disable discovery of all values? In order to make this persistent remember to click on Store',
 				))
@@ -318,7 +333,7 @@ export default {
 			const device = this.selectedDevice
 			if (
 				device &&
-				(await this.$listeners.showConfirm(
+				(await this.app.confirm(
 					'Rediscover Device',
 					'Are you sure you want to re-discover selected device?',
 				))
@@ -340,7 +355,7 @@ export default {
 		async rediscoverNode() {
 			if (
 				this.node &&
-				(await this.$listeners.showConfirm(
+				(await this.app.confirm(
 					'Rediscover node',
 					'Are you sure you want to re-discover all node values?',
 				))
@@ -373,7 +388,7 @@ export default {
 				)
 			}
 		},
-		async updateDevice() {
+		async updateDeviceJSON() {
 			if (!this.errorDevice) {
 				const updated = JSON.parse(this.deviceJSON)
 				this.$set(
@@ -381,15 +396,33 @@ export default {
 					this.selectedDevice.id,
 					updated,
 				)
-				const response = await this.sendAction({
-					apiName: 'update',
-					device: updated,
-					nodeId: this.node.id,
-				})
+				await this.updateDevice(updated)
+			}
+		},
+		async toggleField(device, field) {
+			device[field] = !device[field]
+			await this.updateDevice(device)
+		},
+		async updateDevice(device) {
+			const response = await this.sendAction({
+				apiName: 'update',
+				device,
+				nodeId: this.node.id,
+			})
 
-				if (response.success) {
-					this.showSnackbar(`Device ${updated.id} updated`, 'success')
+			if (response.success) {
+				this.node.hassDevices = {
+					...this.node.hassDevices,
+					[device.id]: device,
 				}
+
+				if (
+					this.selectedDevice &&
+					this.selectedDevice.id === device.id
+				) {
+					this.deviceJSON = JSON.stringify(device, null, 2)
+				}
+				this.showSnackbar(`Device ${device.id} updated`, 'success')
 			}
 		},
 		validJSONdevice() {

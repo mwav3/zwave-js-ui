@@ -40,8 +40,8 @@
 					<v-text-field
 						label="Normal Power Level"
 						v-model.number="node.powerlevel"
-						:min="-12.8"
-						:max="12.7"
+						:min="-10"
+						:max="20"
 						:step="0.1"
 						suffix="dBm"
 						type="number"
@@ -52,8 +52,8 @@
 						label="Measured output power at 0 dBm"
 						append-outer-icon="send"
 						v-model.number="node.measured0dBm"
-						:min="-12.8"
-						:max="12.7"
+						:min="-10"
+						:max="10"
 						:step="0.1"
 						suffix="dBm"
 						type="number"
@@ -78,14 +78,10 @@
 						</template>
 					</v-text-field>
 				</v-col>
-				<v-col
-					v-if="node.RFRegion !== undefined"
-					cols="12"
-					style="max-width: 300px"
-				>
+				<v-col cols="12" style="max-width: 300px">
 					<v-select
 						label="RF Region"
-						:items="rfRegions"
+						:items="node.rfRegions"
 						v-model="node.RFRegion"
 					>
 						<template v-slot:append-outer>
@@ -112,14 +108,13 @@
 			<v-col style="max-width: 700px" dense>
 				<v-alert text type="warning">
 					<strong
-						>DO NOT CHANGE THIS VALUES UNLESS YOU KNOW WHAT YOU ARE
-						DOING</strong
-					>
+						>DO NOT CHANGE THESE VALUES UNLESS YOU KNOW WHAT YOU ARE
+						DOING
+					</strong>
 					<small
 						>Increasing the TX power (normal power level) may be
-						<b>illegal</b>, depending on where you are
-						located</small
-					>
+						<b>illegal</b>, depending on where you are located.
+					</small>
 
 					<small
 						>Increasing the TX power will only make the nodes "hear"
@@ -206,12 +201,12 @@
 								<v-col align-self="center">
 									{{ className }}
 								</v-col>
-								<v-col class="text-right pr-5">
+								<v-col class="text-right">
 									<v-btn
 										v-if="canResetConfig(group[0])"
 										@click.stop="resetAllConfig()"
 										color="error"
-										class="mb-1"
+										class="mb-1 mr-3"
 										outlined
 										x-small
 									>
@@ -346,7 +341,6 @@
 <script>
 import { mapState, mapActions } from 'pinia'
 import { validTopic } from '../../lib/utils'
-import { rfRegions } from '../../lib/items'
 import { ConfigValueFormat } from '@zwave-js/core/safe'
 import useBaseStore from '../../stores/base.js'
 import InstancesMixin from '../../mixins/InstancesMixin.js'
@@ -384,7 +378,6 @@ export default {
 				parameter: 1,
 				valueFormat: ConfigValueFormat.UnsignedInteger,
 			},
-			rfRegions,
 		}
 	},
 	computed: {

@@ -1,5 +1,4 @@
 import express, { Request, RequestHandler, Response, Router } from 'express'
-import { version } from './package.json'
 import history from 'connect-history-api-fallback'
 import cors from 'cors'
 import csrf from 'csurf'
@@ -10,12 +9,7 @@ import jsonStore from './lib/jsonStore'
 import * as loggers from './lib/logger'
 import MqttClient from './lib/MqttClient'
 import SocketManager from './lib/SocketManager'
-import ZWaveClient, {
-	CallAPIResult,
-	configManager,
-	loadManager,
-	SensorTypeScale,
-} from './lib/ZwaveClient'
+import ZWaveClient, { CallAPIResult, SensorTypeScale } from './lib/ZwaveClient'
 import multer, { diskStorage } from 'multer'
 import extract from 'extract-zip'
 import { serverVersion } from '@zwave-js/server'
@@ -49,6 +43,8 @@ import * as utils from './lib/utils'
 import backupManager from './lib/BackupManager'
 import { readFile, realpath } from 'fs/promises'
 import { generate } from 'selfsigned'
+import ZnifferManager, { ZnifferConfig } from './lib/ZnifferManager'
+import { getAllNamedScaleGroups, getAllSensors } from '@zwave-js/core'
 
 const createCertificate = promisify(generate)
 
@@ -159,6 +155,7 @@ socketManager.authMiddleware = function (
 }
 
 let gw: Gateway // the gateway instance
+let zniffer: ZnifferManager // the zniffer instance
 const plugins: CustomPlugin[] = []
 let pluginsRouter: Router
 
@@ -257,7 +254,7 @@ export async function startServer(port: number | string, host?: string) {
 	setupSocket(server)
 	setupInterceptor()
 	await loadSnippets()
-	await loadManager()
+	startZniffer(settings.zniffer)
 	await startGateway(settings)
 }
 
@@ -346,6 +343,7 @@ async function loadCertKey(): Promise<{
 		try {
 			const result = await createCertificate([], {
 				days: 99999,
+				keySize: 2048,
 			})
 
 			key = result.private
@@ -425,6 +423,12 @@ async function startGateway(settings: Settings) {
 	restarting = false
 }
 
+function startZniffer(settings: ZnifferConfig) {
+	if (settings) {
+		zniffer = new ZnifferManager(settings, socketManager.io)
+	}
+}
+
 async function destroyPlugins() {
 	while (plugins.length > 0) {
 		const instance = plugins.pop()
@@ -437,24 +441,9 @@ async function destroyPlugins() {
 
 function setupInterceptor() {
 	// intercept logs and redirect them to socket
-	const interceptor = (
-		write: (
-			buffer: string | Uint8Array,
-			cb?: (err?: Error) => void,
-		) => void,
-	) => {
-		return function (...args: any[]): boolean {
-			socketManager.io.emit(socketEvents.debug, args[0]?.toString())
-			return write.apply(process.stdout, args)
-		}
-	}
-
-	process.stdout.write = interceptor(
-		process.stdout.write.bind(process.stdout),
-	)
-	process.stderr.write = interceptor(
-		process.stderr.write.bind(process.stderr),
-	)
+	loggers.logStream.on('data', (chunk) => {
+		socketManager.io.emit(socketEvents.debug, chunk.toString())
+	})
 }
 
 async function parseDir(dir: string): Promise<StoreFileEntry[]> {
@@ -511,9 +500,12 @@ function sortStore(store: StoreFileEntry[]) {
 logger.info(`Version: ${utils.getVersion()}`)
 logger.info('Application path:' + utils.getPath(true))
 
-// view engine setup
-app.set('views', utils.joinPath(false, 'views'))
-app.set('view engine', 'ejs')
+if (process.env.TRUST_PROXY) {
+	app.set(
+		'trust proxy',
+		process.env.TRUST_PROXY === 'true' ? true : process.env.TRUST_PROXY,
+	)
+}
 
 app.use(
 	morgan(loggers.disableColors ? 'tiny' : 'dev', {
@@ -617,10 +609,17 @@ function setupSocket(server: HttpServer) {
 		// Server: https://socket.io/docs/v4/server-application-structure/#all-event-handlers-are-registered-in-the-indexjs-file
 		// Client: https://socket.io/docs/v4/client-api/#socketemiteventname-args
 		socket.on(inboundEvents.init, (data, cb = noop) => {
+			let state = {} as any
+
 			if (gw.zwave) {
-				const state = gw.zwave.getState()
-				cb(state)
+				state = gw.zwave.getState()
 			}
+
+			if (zniffer) {
+				state.zniffer = zniffer.status()
+			}
+
+			cb(state)
 		})
 
 		socket.on(
@@ -722,6 +721,49 @@ function setupSocket(server: HttpServer) {
 			const result = {
 				success: !err,
 				message: err || 'Success HASS api call',
+				result: res,
+				api: data.apiName,
+			}
+
+			cb(result)
+		})
+
+		// eslint-disable-next-line @typescript-eslint/no-misused-promises
+		socket.on(inboundEvents.zniffer, async (data, cb = noop) => {
+			logger.info(`Zniffer api call: ${data.api}`)
+
+			let res: any, err: string
+			try {
+				switch (data.apiName) {
+					case 'start':
+						res = await zniffer.start()
+						break
+					case 'stop':
+						res = await zniffer.stop()
+						break
+					case 'clear':
+						res = zniffer.clear()
+						break
+					case 'getFrames':
+						res = zniffer.getFrames()
+						break
+					case 'setFrequency':
+						res = await zniffer.setFrequency(data.frequency)
+						break
+					case 'saveCaptureToFile':
+						res = await zniffer.saveCaptureToFile()
+						break
+					default:
+						throw new Error(`Unknown ZNIFFER api ${data.apiName}`)
+				}
+			} catch (error) {
+				logger.error('Error while calling ZNIFFER api', error)
+				err = error.message
+			}
+
+			const result = {
+				success: !err,
+				message: err || 'Success ZNIFFER api call',
 				result: res,
 				api: data.apiName,
 			}
@@ -1000,15 +1042,15 @@ app.get(
 	apisLimiter,
 	isAuthenticated,
 	async function (req, res) {
-		const sensorTypes = configManager.sensorTypes
-		const sensorScalesGroups = configManager.namedScales
+		const allSensors = getAllSensors()
+		const namedScaleGroups = getAllNamedScaleGroups()
 
 		const scales: SensorTypeScale[] = []
 
-		for (const [key, group] of sensorScalesGroups) {
-			for (const [, scale] of group) {
+		for (const group of namedScaleGroups) {
+			for (const scale of Object.values(group.scales)) {
 				scales.push({
-					key: key,
+					key: group.name,
 					sensor: group.name,
 					unit: scale.unit,
 					label: scale.label,
@@ -1017,8 +1059,8 @@ app.get(
 			}
 		}
 
-		for (const [, sensor] of sensorTypes) {
-			for (const [, scale] of sensor.scales) {
+		for (const sensor of allSensors) {
+			for (const scale of Object.values(sensor.scales)) {
 				scales.push({
 					key: sensor.key,
 					sensor: sensor.label,
@@ -1038,6 +1080,8 @@ app.get(
 			serial_ports: [],
 			scales: scales,
 			sslDisabled: sslDisabled(),
+			tz: process.env.TZ,
+			locale: process.env.LOCALE,
 			deprecationWarning: process.env.TAG_NAME === 'zwavejs2mqtt',
 		}
 
@@ -1070,15 +1114,50 @@ app.post(
 			}
 			// TODO: validate settings using calss-validator
 			const settings = req.body
+
+			const actualSettings = jsonStore.get(store.settings) as Settings
+
+			const shouldRestartGw = !utils.deepEqual(
+				{
+					zwave: actualSettings.zwave,
+					gateway: actualSettings.gateway,
+					mqtt: actualSettings.mqtt,
+				},
+				{
+					zwave: settings.zwave,
+					gateway: settings.gateway,
+					mqtt: settings.mqtt,
+				},
+			)
+
+			const shouldRestartZniffer = !utils.deepEqual(
+				actualSettings.zniffer,
+				settings.zniffer,
+			)
+
+			// nothing changed, consider it a forced restart
+			const restartAll = !shouldRestartGw && !shouldRestartZniffer
+
 			restarting = true
 			await jsonStore.put(store.settings, settings)
-			await gw.close()
-			await destroyPlugins()
-			// reload loggers settings
-			setupLogging(settings)
-			// restart clients and gateway
-			await startGateway(settings)
-			backupManager.init(gw.zwave)
+
+			if (restartAll || shouldRestartGw) {
+				await gw.close()
+
+				await destroyPlugins()
+				// reload loggers settings
+				setupLogging(settings)
+				// restart clients and gateway
+				await startGateway(settings)
+				backupManager.init(gw.zwave)
+			}
+
+			if (restartAll || shouldRestartZniffer) {
+				if (zniffer) {
+					await zniffer.close()
+				}
+				startZniffer(settings.zniffer)
+			}
 
 			res.json({
 				success: true,
@@ -1158,7 +1237,7 @@ app.post(
 
 			// update versions to actual ones
 			settings.gateway.versions = {
-				app: version, // don't use getVersion here as it may include commit sha
+				app: utils.pkgJson.version, // don't use getVersion here as it may include commit sha
 				driver: libVersion,
 				server: serverVersion,
 			}
@@ -1444,6 +1523,7 @@ app.post(
 			await multerPromise(multerUpload, req, res)
 
 			isRestore = req.body.restore === 'true'
+			const folder = req.body.folder
 
 			file = req.files[0]
 
@@ -1454,7 +1534,10 @@ app.post(
 			if (isRestore) {
 				await extract(file.path, { dir: storeDir })
 			} else {
-				await move(file.path, path.join(storeDir, file.originalname))
+				const destinationPath = getSafePath(
+					path.join(storeDir, folder, file.originalname),
+				)
+				await move(file.path, destinationPath)
 			}
 
 			res.json({ success: true })

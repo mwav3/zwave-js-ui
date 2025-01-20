@@ -21,7 +21,7 @@
 					style="max-height: calc(100vh - 64px); overflow-y: auto"
 				>
 					<template v-slot:prepend="{ item, open }">
-						<v-icon color="#FFC107" v-if="!item.ext">
+						<v-icon color="#FFC107" v-if="item.children">
 							{{ open ? 'folder_open' : 'folder' }}
 						</v-icon>
 						<v-icon color="blue" v-else> text_snippet </v-icon>
@@ -34,22 +34,72 @@
 					</template>
 					<template v-slot:append="{ item }">
 						<v-row justify-end class="ma-1">
+							<v-menu v-if="item.children" offset-y>
+								<template v-slot:activator="{ on }">
+									<v-icon v-on="on">more_vert</v-icon>
+								</template>
+								<v-list class="py-0" dense>
+									<v-list-item
+										dense
+										@click.stop="writeFile(item.path, true)"
+									>
+										<v-list-item-icon>
+											<v-icon color="yellow"
+												>create_new_folder</v-icon
+											>
+										</v-list-item-icon>
+										<v-list-item-title
+											>Create New
+											Folder</v-list-item-title
+										>
+									</v-list-item>
+									<v-list-item
+										dense
+										@click.stop="
+											writeFile(item.path, false)
+										"
+									>
+										<v-list-item-icon>
+											<v-icon color="primary"
+												>post_add</v-icon
+											>
+										</v-list-item-icon>
+										<v-list-item-title
+											>Add File</v-list-item-title
+										>
+									</v-list-item>
+									<v-list-item
+										dense
+										v-if="!item.isRoot"
+										@click.stop="deleteFile(item)"
+									>
+										<v-list-item-icon>
+											<v-icon color="red">delete</v-icon>
+										</v-list-item-icon>
+										<v-list-item-title
+											>Delete</v-list-item-title
+										>
+									</v-list-item>
+									<v-list-item
+										dense
+										@click.stop="uploadFile(item)"
+									>
+										<v-list-item-icon>
+											<v-icon color="orange"
+												>upload</v-icon
+											>
+										</v-list-item-icon>
+										<v-list-item-title
+											>Upload File</v-list-item-title
+										>
+									</v-list-item>
+								</v-list>
+							</v-menu>
+							<!-- only show delete -->
 							<v-icon
-								v-if="item.children"
-								@click.stop="writeFile(item.path, true)"
-								color="yellow"
-								>create_new_folder</v-icon
-							>
-							<v-icon
-								v-if="item.children"
-								@click.stop="writeFile(item.path, false)"
-								color="primary"
-								>post_add</v-icon
-							>
-							<v-icon
-								v-if="!item.isRoot"
-								@click.stop="deleteFile(item)"
+								v-else
 								color="red"
+								@click.stop="deleteFile(item)"
 								>delete</v-icon
 							>
 						</v-row>
@@ -82,7 +132,7 @@
 								dark
 								small
 								color="green"
-								@click="restoreZip"
+								@click="restoreZip()"
 								v-bind="attrs"
 								v-on="on"
 							>
@@ -99,7 +149,7 @@
 								dark
 								small
 								color="orange"
-								@click="uploadFile"
+								@click="uploadFile()"
 								v-bind="attrs"
 								v-on="on"
 							>
@@ -308,11 +358,13 @@ import 'prismjs/themes/prism-tomorrow.css'
 import { mapActions } from 'pinia'
 import useBaseStore from '../stores/base.js'
 import logger from '../lib/logger.js'
+import InstancesMixin from '../mixins/InstancesMixin.js'
 
 const log = logger.get('Store')
 
 export default {
 	name: 'Store',
+	mixins: [InstancesMixin],
 	components: {
 		PrismEditor: () =>
 			import('vue-prism-editor').then((m) => m.PrismEditor),
@@ -327,6 +379,9 @@ export default {
 			if (!this.active.length) return undefined
 
 			return this.active[0]
+		},
+		storePath() {
+			return this.items[0]?.path
 		},
 	},
 	data() {
@@ -347,9 +402,9 @@ export default {
 		...mapActions(useBaseStore, ['showSnackbar']),
 		async deleteFile(item) {
 			if (
-				await this.$listeners.showConfirm(
+				await this.app.confirm(
 					'Attention',
-					`Are you sure you want to delete the file ${item.name}?`,
+					`Are you sure you want to delete the file <code>${item.name}</code>?`,
 					'alert',
 				)
 			) {
@@ -372,7 +427,7 @@ export default {
 		async deleteSelected() {
 			const files = this.selectedFiles.map((f) => f.path)
 			if (
-				await this.$listeners.showConfirm(
+				await this.app.confirm(
 					'Attention',
 					`Are you sure you want to delete ${files.length} files?`,
 					'alert',
@@ -438,7 +493,7 @@ export default {
 					.split('.')
 					.slice(0, -1)
 					.join('.')
-				this.$listeners.export(
+				this.app.exportConfiguration(
 					this.fileContent,
 					fileName,
 					this.selected.ext,
@@ -446,7 +501,7 @@ export default {
 			}
 		},
 		async backupStore() {
-			const result = await this.$listeners.showConfirm(
+			const result = await this.app.confirm(
 				'Backup store',
 				'Are you sure you want to backup the store? This backup will contain all useful files and settings.',
 				'info',
@@ -473,23 +528,18 @@ export default {
 			}
 		},
 		async restoreZip() {
-			const restore = await this.$listeners.showConfirm(
-				'Restore zip',
-				'',
-				'info',
-				{
-					confirmText: 'Restore',
-					inputs: [
-						{
-							type: 'file',
-							label: 'Zip file',
-							required: true,
-							key: 'file',
-							accept: 'application/zip',
-						},
-					],
-				},
-			)
+			const restore = await this.app.confirm('Restore zip', '', 'info', {
+				confirmText: 'Restore',
+				inputs: [
+					{
+						type: 'file',
+						label: 'Zip file',
+						required: true,
+						key: 'file',
+						accept: 'application/zip',
+					},
+				],
+			})
 
 			if (restore.file) {
 				try {
@@ -506,13 +556,17 @@ export default {
 				}
 			}
 		},
-		async uploadFile() {
-			const upload = await this.$listeners.showConfirm(
-				'Upload file',
-				'',
+		async uploadFile(folder) {
+			const folderPath = folder
+				? folder.path.replace(this.storePath, '')
+				: ''
+			const upload = await this.app.confirm(
+				`Upload file`,
+				`Destination folder: <code>${folderPath || 'root'}</code>`,
 				'info',
 				{
 					confirmText: 'Upload',
+					width: 500,
 					inputs: [
 						{
 							type: 'file',
@@ -528,6 +582,11 @@ export default {
 				try {
 					const formData = new FormData()
 					formData.append('upload', upload.file)
+
+					if (folderPath) {
+						formData.append('folder', folderPath)
+					}
+
 					const res = await ConfigApis.storeUpload(formData)
 					if (!res.success)
 						throw new Error(res.message || 'Upload failed')
@@ -545,7 +604,7 @@ export default {
 			// create a new file
 			if (isNew) {
 				const text = isDirectory ? 'Directory' : 'File'
-				const { name } = await this.$listeners.showConfirm(
+				const { name } = await this.app.confirm(
 					'New ' + text,
 					'',
 					'info',
@@ -577,9 +636,9 @@ export default {
 
 			if (
 				isNew ||
-				(await this.$listeners.showConfirm(
+				(await this.app.confirm(
 					'Attention',
-					`Are you sure you want to overwrite the content of the file ${this.selected.name}?`,
+					`Are you sure you want to overwrite the content of the file <code>${this.selected.name}<code>?`,
 					'alert',
 				))
 			) {

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { $set, deepEqual } from '../lib/utils'
 import logger from '../lib/logger'
 
-import { Settings } from '@/modules/Settings'
+import { Settings } from '../modules/Settings'
 
 const settings = new Settings(localStorage)
 
@@ -10,6 +10,7 @@ const log = logger.get('Store:Base')
 
 const useBaseStore = defineStore('base', {
 	state: () => ({
+		inited: false,
 		auth: undefined,
 		controllerId: undefined,
 		serial_ports: [],
@@ -17,7 +18,14 @@ const useBaseStore = defineStore('base', {
 		nodes: [],
 		nodesMap: new Map(),
 		user: {},
+		tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+		locale: undefined, // uses default browser locale
+		preferences: settings.load('preferences', {
+			eventsList: {},
+			smartStartTable: {},
+		}),
 		zwave: {
+			enabled: true,
 			port: '/dev/zwave',
 			allowBootloaderOnly: false,
 			commandsTimeout: 30,
@@ -29,14 +37,18 @@ const useBaseStore = defineStore('base', {
 					measured0dBm: undefined,
 				},
 			},
-			logEnabled: true,
 			securityKeys: {
-				S2_Unauthenticated: undefined,
-				S2_Authenticated: undefined,
-				S2_AccessControl: undefined,
-				S0_Legacy: undefined,
+				S2_Unauthenticated: '',
+				S2_Authenticated: '',
+				S2_AccessControl: '',
+				S0_Legacy: '',
+			},
+			securityKeysLongRange: {
+				S2_Authenticated: '',
+				S2_AccessControl: '',
 			},
 			deviceConfigPriorityDir: '',
+			logEnabled: true,
 			logToFile: true,
 			maxFiles: 7,
 			serverEnabled: false,
@@ -47,6 +59,8 @@ const useBaseStore = defineStore('base', {
 			serverHost: undefined,
 			maxNodeEventsQueueSize: 100,
 			higherReportsTimeout: false,
+			disableControllerRecovery: false,
+			disableWatchdog: false,
 		},
 		backup: {
 			storeBackup: false,
@@ -69,6 +83,25 @@ const useBaseStore = defineStore('base', {
 			auth: false,
 			username: undefined,
 			password: undefined,
+		},
+		zniffer: {
+			enabled: false,
+			port: '',
+			logEnabled: true,
+			logToFile: true,
+			maxFiles: 7,
+			securityKeys: {
+				S2_Unauthenticated: '',
+				S2_Authenticated: '',
+				S2_AccessControl: '',
+				S0_Legacy: '',
+			},
+			securityKeysLongRange: {
+				S2_Authenticated: '',
+				S2_AccessControl: '',
+			},
+			convertRSSI: false,
+			defaultFrequency: undefined,
 		},
 		devices: [],
 		gateway: {
@@ -96,18 +129,36 @@ const useBaseStore = defineStore('base', {
 			controllerStatus: 'Unknown',
 			newConfigVersion: undefined,
 		},
+		znifferState: {
+			error: '',
+			started: false,
+			frequency: false,
+		},
 		ui: {
 			darkMode: settings.load('dark', false),
 			navTabs: settings.load('navTabs', false),
 			compactMode: settings.load('compact', false),
+			streamerMode: settings.load('streamerMode', false),
 		},
 	}),
 	getters: {
 		controllerNode() {
 			return this.controllerId ? this.getNode(this.controllerId) : null
 		},
+		settings() {
+			return settings
+		},
 	},
 	actions: {
+		getDateTimeString(date) {
+			if (typeof date === 'string' || typeof date === 'number') {
+				date = new Date(date)
+			}
+
+			return date.toLocaleString(this.locale, {
+				timeZone: this.tz,
+			})
+		},
 		getNode(id) {
 			if (typeof id === 'string') {
 				id = parseInt(id)
@@ -132,8 +183,8 @@ const useBaseStore = defineStore('base', {
 		updateMeshGraph(node) {
 			// empty mutation, will be caught in Mesh.vue $onAction
 		},
-		setUser(data) {
-			Object.assign(this.user, data)
+		onUserLogged(user) {
+			Object.assign(this.user, user)
 		},
 		setControllerStatus(data) {
 			this.appInfo.controllerStatus = data
@@ -145,6 +196,12 @@ const useBaseStore = defineStore('base', {
 			this.appInfo.zwaveVersion = data.zwaveVersion
 			this.appInfo.serverVersion = data.serverVersion
 			this.appInfo.newConfigVersion = data.newConfigVersion
+		},
+		setZnifferState(data) {
+			this.znifferState = {
+				...this.znifferState,
+				...data,
+			}
 		},
 		setValue(valueId) {
 			const toReplace = this.getValue(valueId)
@@ -443,8 +500,14 @@ const useBaseStore = defineStore('base', {
 					this.zwave.rf.txPower = {}
 				}
 				Object.assign(this.mqtt, conf.mqtt || {})
+				Object.assign(this.zniffer, conf.zniffer || {})
 				Object.assign(this.gateway, conf.gateway || {})
 				Object.assign(this.backup, conf.backup || {})
+				Object.assign(this.ui, conf.ui || {})
+
+				// ensure local storage is in sync with the store
+				// to prevent theme switch on startup
+				this.setDarkMode(this.ui.darkMode)
 			}
 		},
 		initPorts(ports) {
@@ -484,23 +547,72 @@ const useBaseStore = defineStore('base', {
 		},
 		init(data) {
 			if (data) {
+				if (data.tz) {
+					// validate timezone
+					try {
+						new Intl.DateTimeFormat(undefined, {
+							timeZone: data.tz,
+						})
+						this.tz = data.tz
+					} catch (e) {
+						log.error('Invalid timezone:', data.tz)
+						this.showSnackbar(
+							`Invalid timezone: ${data.tz}`,
+							'error',
+						)
+					}
+				}
+
+				if (data.locale) {
+					this.locale = data.locale
+				}
+
 				this.initSettings(data.settings)
 				this.initPorts(data.serial_ports)
 				this.initScales(data.scales)
 				this.initDevices(data.devices)
+
+				this.inited = true
 			}
 		},
 		setDarkMode(value) {
 			settings.store('dark', value)
+			// the `darkMode` watcher in App.vue will change vuetify theme
 			this.ui.darkMode = value
+
+			const metaThemeColor = document.querySelector(
+				'meta[name=theme-color]',
+			)
+			const metaThemeColor2 = document.querySelector(
+				'meta[name=msapplication-TileColor]',
+			)
+
+			metaThemeColor.setAttribute('content', value ? '#000' : '#fff')
+			metaThemeColor2.setAttribute('content', value ? '#000' : '#fff')
 		},
 		setNavTabs(value) {
 			settings.store('navTabs', value)
 			this.ui.navTabs = value
 		},
+		setStreamerMode(value) {
+			settings.store('streamerMode', value)
+			this.ui.streamerMode = value
+		},
 		setCompactMode(value) {
 			settings.store('compact', value)
 			this.ui.compactMode = value
+		},
+		getPreference(key, defaultValue) {
+			return {
+				...defaultValue,
+				...(this.preferences[key] || {}),
+			}
+		},
+		savePreferences(pref) {
+			settings.store(
+				'preferences',
+				pref ? Object.assign(this.preferences, pref) : this.preferences,
+			)
 		},
 	},
 })

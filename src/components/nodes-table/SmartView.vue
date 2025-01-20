@@ -1,6 +1,6 @@
 <template>
 	<v-container fluid class="fill pa-0">
-		<v-text-field
+		<!-- <v-text-field
 			v-model="search"
 			v-if="!loading"
 			prepend-icon="search"
@@ -10,16 +10,67 @@
 			single-line
 			style="max-width: 250px"
 			clearable
-		></v-text-field>
+		></v-text-field> -->
 		<v-data-iterator
 			:loading="loading"
 			:items="nodes"
 			:search="search"
 			v-model="selected"
 			item-key="id"
+			:sort-by="sortBy.toLowerCase()"
+			:sort-desc="sortDesc"
 			hide-default-footer
 			:itemsPerPage="-1"
 		>
+			<template v-slot:header>
+				<div
+					class="my-2 d-flex justify-center"
+					style="column-gap: 10px; flex-wrap: wrap"
+				>
+					<div>
+						<v-text-field
+							v-model="search"
+							clearable
+							flat
+							solo-inverted
+							hide-details
+							single-line
+							class="mx-auto my-1"
+							style="max-width: 250px; min-width: 250px"
+							prepend-inner-icon="search"
+							label="Search"
+						></v-text-field>
+					</div>
+					<div>
+						<v-select
+							v-model="sortBy"
+							flat
+							solo-inverted
+							single-line
+							hide-details
+							class="mx-auto my-1"
+							style="max-width: 150px"
+							:items="keys"
+							prepend-inner-icon="sort"
+							label="Sort by"
+						></v-select>
+					</div>
+					<div>
+						<v-btn-toggle
+							class="mx-auto my-1"
+							v-model="sortDesc"
+							mandatory
+						>
+							<v-btn depressed :value="false">
+								<v-icon>arrow_upward</v-icon>
+							</v-btn>
+							<v-btn depressed :value="true">
+								<v-icon>arrow_downward</v-icon>
+							</v-btn>
+						</v-btn-toggle>
+					</div>
+				</div>
+			</template>
 			<template v-slot:no-data>
 				<v-container>
 					<v-row class="pa-0">
@@ -168,7 +219,6 @@
 
 											<reinterview-badge
 												:node="item"
-												v-on="$listeners"
 												:b-style="{
 													position: 'absolute',
 													top: '0',
@@ -271,11 +321,7 @@
 					<v-icon>close</v-icon>
 				</v-btn>
 				<v-card-text class="pt-3">
-					<expanded-node
-						:node="expandedNode"
-						:socket="socket"
-						v-on="$listeners"
-					/>
+					<expanded-node :node="expandedNode" :socket="socket" />
 				</v-card-text>
 			</v-card>
 		</v-dialog>
@@ -335,6 +381,30 @@ export default {
 	data() {
 		return {
 			search: '',
+			sortBy: 'id',
+			keys: [
+				{
+					text: 'ID',
+					value: 'id',
+				},
+				{
+					text: 'Name',
+					value: 'name',
+				},
+				{
+					text: 'Location',
+					value: 'loc',
+				},
+				{
+					text: 'Status',
+					value: 'status',
+				},
+				{
+					text: 'Ready',
+					value: 'ready',
+				},
+			],
+			sortDesc: false,
 			selected: [],
 			loading: false,
 			expandedNode: null,
@@ -367,7 +437,7 @@ export default {
 						(node.firmwareUpdate.sentFragments /
 							node.firmwareUpdate.totalFragments) *
 							100,
-				  )
+					)
 				: null
 		},
 		readyRichValue(node) {

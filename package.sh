@@ -33,6 +33,11 @@ ask() {
 	done
 }
 
+pkg() {
+	echo "Executing command: npx pkg $@"
+	npx pkg $@
+}
+
 APP=$(node -p "require('./package.json').name")
 PKG_FOLDER="pkg"
 
@@ -62,19 +67,25 @@ if [ ! -z "$1" ]; then
 
 	# skip build if args contains --skip-build
 	if [[ "$@" != *"--skip-build"* ]]; then
-		yarn run build
+		npm run build
 	else
 		echo "## Skipping build..."
 	fi
 
+	# if --bundle is passed as argument, cd to `build` folder
+	if [[ "$@" == *"--bundle"* ]]; then
+		echo "## Building bundle..."
+		echo ''
+		npm run bundle
+		echo "## Changing directory to build folder"
+		cd build
+	fi
+
 	if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-		echo "Executing command: pkg package.json -t node$NODE_MAJOR-linux-arm64 --out-path $PKG_FOLDER"
 		pkg package.json -t node$NODE_MAJOR-linux-arm64 --out-path $PKG_FOLDER
 	elif [ "$ARCH" = "armv7" ]; then
-		echo "Executing command: pkg package.json -t node$NODE_MAJOR-linux-armv7 --out-path $PKG_FOLDER"
 		pkg package.json -t node$NODE_MAJOR-linux-armv7 --out-path $PKG_FOLDER --public-packages=*
 	else
-		echo "Executing command: pkg package.json -t node$NODE_MAJOR-linux-x64,node$NODE_MAJOR-win-x64 --out-path $PKG_FOLDER"
 		pkg package.json -t node$NODE_MAJOR-linux-x64,node$NODE_MAJOR-win-x64  --out-path $PKG_FOLDER
 	fi
 
@@ -82,7 +93,7 @@ else
 
 	if ask "Re-build $APP?"; then
 		echo "## Building application"
-		yarn run build
+		npm run build
 	fi
 
 	echo '###################################################'

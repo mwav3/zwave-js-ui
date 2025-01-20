@@ -248,8 +248,8 @@
 										hoverNode.productLabel +
 										(hoverNode.productDescription
 											? ' (' +
-											  hoverNode.productDescription +
-											  ')'
+												hoverNode.productDescription +
+												')'
 											: '')
 									}}</v-list-item-content
 								>
@@ -376,7 +376,6 @@ export default {
 			selectedNodes: [],
 			showReturnRoutes: true,
 			showApplicationRoutes: true,
-			starSvg: '/star.svg',
 			menuX: 0,
 			menuY: 0,
 			menu: false,
@@ -426,7 +425,7 @@ export default {
 				{
 					color: '#666666',
 					textColor: '#666666',
-					text: 'Unconnected',
+					text: 'Unknown',
 				},
 			],
 			edgesLegend: [
@@ -444,7 +443,7 @@ export default {
 				{
 					icon: 'more_horiz',
 					textColor: '',
-					text: 'Next last working route',
+					text: 'Next to last working route',
 				},
 				{
 					color: '#8b0000',
@@ -945,10 +944,17 @@ export default {
 				}
 			}
 		},
-		parseRouteStats(edges, controllerId, node, route, routeKind) {
+		parseRouteStats(
+			edges,
+			controllerId,
+			node,
+			route,
+			routeKind,
+			forceShow = false,
+		) {
 			if (!route) {
 				if (routeKind !== RouteKind.NLWR) {
-					// unconnected
+					// unknown route
 					node.color = this.legends[6].color
 				}
 				return
@@ -957,7 +963,8 @@ export default {
 			const isReturn = routeKind >= 20
 
 			// tells if this route should be shown in overview
-			const showInOverview = routeKind !== RouteKind.NLWR && !isReturn
+			const showInOverview =
+				forceShow || (routeKind !== RouteKind.NLWR && !isReturn)
 
 			const { repeaters, repeaterRSSI, rssi, routeFailedBetween } = route
 
@@ -1008,7 +1015,8 @@ export default {
 				const starArrow = {
 					enabled: true,
 					type: 'image',
-					src: this.starSvg,
+					// don't use path here, seems vis-network doens't respect X-External-Path header causing 404 on HA Addon (issue https://github.com/zwave-js/zwave-js-ui/issues/3492)
+					src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNyIgaGVpZ2h0PSIxNSIgdmlld0JveD0iLTEgLTEgMTcgMTYiPgogIDxwYXRoIGQ9Im03LjUgMCAyLjI0IDQuNiA1IC43NS0zLjYyIDMuNTkuODYgNS4wNi00LjQ4LTIuNEwzLjAyIDE0bC44Ni01LjA2TC4yNiA1LjM1bDUtLjc0Wm0wIDAiIHN0eWxlPSJzdHJva2U6IzAwMDtmaWxsLXJ1bGU6bm9uemVybztmaWxsOiNmZmM5MDE7ZmlsbC1vcGFjaXR5OjEiLz4KPC9zdmc+',
 					scaleFactor: 1,
 				}
 
@@ -1189,13 +1197,14 @@ export default {
 					RouteKind.LWR,
 				)
 
-				// parse node NLWR (next last working route)
+				// parse node NLWR (next to last working route)
 				this.parseRouteStats(
 					edges,
 					hubNode,
 					entity,
 					node.statistics?.nlwr,
 					RouteKind.NLWR,
+					!node.statistics?.lwr,
 				)
 
 				if (node.customSUCReturnRoutes) {

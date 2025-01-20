@@ -20,9 +20,15 @@ import {
 	mdiPlusCircle,
 	mdiPowerPlug,
 	mdiSleep,
+	mdiZWave,
 } from '@mdi/js'
 import useBaseStore from '../../stores/base.js'
-import { getBatteryDescription } from '../../lib/utils.js'
+import {
+	getBatteryDescription,
+	getProtocolIcon,
+	getProtocol,
+	getProtocolColor,
+} from '../../lib/utils.js'
 
 export default {
 	props: {
@@ -48,6 +54,7 @@ export default {
 	},
 	data: function () {
 		return {
+			search: '',
 			managedNodes: null,
 			nodesProps: {
 				/* The node property definition map entries can have the following attributes:
@@ -154,6 +161,26 @@ export default {
 						return v
 					},
 				},
+				protocol: {
+					type: 'string',
+					label: 'Protocol',
+					richValue: (node) => {
+						let v = {
+							align: 'center',
+							icon: node.ready ? mdiMinusCircle : mdiHelpCircle,
+							iconStyle: node.ready
+								? `color: ${colors.red.base}`
+								: 'color: grey',
+							description: node.ready ? 'No' : 'Unknown Protocol',
+						}
+						if (node.protocol === undefined) return v
+
+						v.icon = mdiZWave
+						v.description = getProtocol(node)
+						v.iconStyle = `color: ${getProtocolColor(node)}`
+						return v
+					},
+				},
 				firmwareVersion: {
 					type: 'string',
 					label: 'FW',
@@ -211,7 +238,7 @@ export default {
 						(node.firmwareUpdate.sentFragments /
 							node.firmwareUpdate.totalFragments) *
 							100,
-				  )
+					)
 				: null
 		},
 		toggleExpanded(item) {
@@ -231,6 +258,7 @@ export default {
 
 			return undefined
 		},
+		getProtocolIcon,
 		groupValue(group) {
 			return this.managedNodes.groupValue(group)
 		},
@@ -245,8 +273,8 @@ export default {
 				value === undefined
 					? valueMap.default
 					: value
-					? valueMap.true
-					: valueMap.false
+						? valueMap.true
+						: valueMap.false
 			return {
 				align: 'center',
 				icon: map.icon,

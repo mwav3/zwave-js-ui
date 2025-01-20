@@ -68,7 +68,6 @@
 			@add="addAssociation"
 			@close="dialogAssociation = false"
 			v-model="dialogAssociation"
-			:nodes="nodes"
 			:node="node"
 			:associations="associations"
 		/>
@@ -80,6 +79,9 @@ import { mapState, mapActions } from 'pinia'
 
 import useBaseStore from '../../stores/base.js'
 import InstancesMixin from '../../mixins/InstancesMixin.js'
+import { getEnumMemberName } from 'zwave-js/safe'
+import { AssociationCheckResult } from '@zwave-js/cc/safe'
+import { getAssociationAddress } from '../../lib/utils'
 
 export default {
 	components: {
@@ -111,12 +113,7 @@ export default {
 	},
 	methods: {
 		...mapActions(useBaseStore, ['showSnackbar']),
-		getAssociationAddress(ass) {
-			return {
-				nodeId: ass.nodeId,
-				endpoint: ass.endpoint === null ? undefined : ass.endpoint,
-			}
-		},
+		getAssociationAddress,
 		getNodeName(nodeId) {
 			const node = this.nodes[this.nodesMap.get(nodeId)]
 			return node ? node._name : 'NodeID_' + nodeId
@@ -135,7 +132,7 @@ export default {
 		async getAssociations(ask = false) {
 			let refresh = false
 			if (ask && this.node.status !== 'Dead') {
-				refresh = await this.$listeners.showConfirm(
+				refresh = await this.app.confirm(
 					'Info',
 					`Do you want to force query associations?${
 						this.node.status === 'Alive'
@@ -180,11 +177,16 @@ export default {
 			const response = await this.app.apiRequest('addAssociations', args)
 
 			if (response.success) {
-				if (response.result) {
+				const checkResult = response.result[0]
+
+				if (checkResult === AssociationCheckResult.OK) {
 					this.showSnackbar('Association added', 'success')
 					this.getAssociations()
 				} else {
-					this.showSnackbar('Error while adding association', 'error')
+					this.showSnackbar(
+						`Error while adding association: ${getEnumMemberName(AssociationCheckResult, checkResult)}`,
+						'error',
+					)
 				}
 			}
 			this.dialogAssociation = false
@@ -218,7 +220,7 @@ export default {
 			const args = [this.node.id]
 
 			if (
-				!(await this.$listeners.showConfirm(
+				!(await this.app.confirm(
 					'Attention',
 					`Are you sure you want to remove all associations from this node? This will also remove lifeline association if it exists.`,
 					'alert',

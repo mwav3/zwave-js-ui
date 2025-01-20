@@ -30,26 +30,6 @@
 		</div>
 
 		<div class="d-flex align-center" v-else>
-			<!-- Prefix loader with tooltip -->
-			<v-tooltip v-if="value.toUpdate" bottom>
-				<template v-slot:activator="{ on }">
-					<v-progress-circular
-						v-on="on"
-						indeterminate
-						class="mr-2"
-						size="20"
-						:color="
-							node?.status === 'Asleep' ? 'warning' : 'primary'
-						"
-					></v-progress-circular>
-				</template>
-				<span>{{
-					node?.status === 'Asleep'
-						? 'Wake up your device in order to send commands'
-						: 'Set value in progress...'
-				}}</span>
-			</v-tooltip>
-
 			<!-- ### VALUEID INPUTS ### -->
 
 			<!-- Text Input -->
@@ -73,7 +53,7 @@
 				:append-outer-icon="!disable_send ? 'send' : null"
 				:suffix="value.unit"
 				:min="value.min != value.max ? value.min : null"
-				:step="1"
+				:step="value.step || 1"
 				persistent-hint
 				:max="value.min != value.max ? value.max : null"
 				:hint="help"
@@ -99,7 +79,7 @@
 				<v-text-field
 					:type="value.type === 'number' ? 'number' : 'text'"
 					:min="value.min != value.max ? value.min : null"
-					:step="1"
+					:step="value.step || 1"
 					persistent-hint
 					:readonly="disable_send"
 					:max="value.min != value.max ? value.max : null"
@@ -143,6 +123,7 @@
 						<v-card>
 							<v-card-text class="pa-0">
 								<v-color-picker
+									v-if="menu"
 									hide-mode-switch
 									v-model="color"
 									flat
@@ -165,8 +146,8 @@
 					'max-width': $vuetify.breakpoint.smAndDown
 						? '280px'
 						: $vuetify.breakpoint.smOnly
-						? '400px'
-						: 'auto',
+							? '400px'
+							: 'auto',
 				}"
 				:hint="help"
 				persistent-hint
@@ -197,8 +178,8 @@
 					'max-width': $vuetify.breakpoint.smAndDown
 						? '280px'
 						: $vuetify.breakpoint.smOnly
-						? '400px'
-						: 'auto',
+							? '400px'
+							: 'auto',
 				}"
 				:hint="help"
 				persistent-hint
@@ -312,6 +293,26 @@
 					>
 				</template>
 				<span class="help">{{ '[' + value.id + '] ' + help }}</span>
+			</v-tooltip>
+
+			<!-- Suffix loader with tooltip -->
+			<v-tooltip v-if="value.toUpdate" bottom>
+				<template v-slot:activator="{ on }">
+					<v-progress-circular
+						v-on="on"
+						indeterminate
+						class="ml-2"
+						size="20"
+						:color="
+							node?.status === 'Asleep' ? 'warning' : 'primary'
+						"
+					></v-progress-circular>
+				</template>
+				<span>{{
+					node?.status === 'Asleep'
+						? 'Wake up your device in order to send commands'
+						: 'Set value in progress...'
+				}}</span>
 			</v-tooltip>
 		</div>
 	</div>

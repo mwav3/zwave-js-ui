@@ -5,12 +5,10 @@ import {
 	IClientOptions,
 	IClientPublishOptions,
 	IClientSubscribeOptions,
-	IStore,
 	connect,
 } from 'mqtt'
-import { allSettled, parseJSON, sanitizeTopic } from './utils'
+import { allSettled, parseJSON, sanitizeTopic, pkgJson } from './utils'
 import { module } from './logger'
-import { version as appVersion } from '../package.json'
 import { TypedEventEmitter } from './EventEmitter'
 import { storeDir } from '../config/app'
 import { ensureDir } from 'fs-extra'
@@ -117,6 +115,13 @@ class MqttClient extends TypedEventEmitter<MqttClientEventCallbacks> {
 	}
 
 	/**
+	 * Returns the topic used to report client status
+	 */
+	getStatusTopic() {
+		return this.getClientTopic(MqttClient.STATUS_TOPIC)
+	}
+
+	/**
 	 * Method used to close clients connection, use this before destroy
 	 */
 	close(): Promise<void> {
@@ -203,7 +208,7 @@ class MqttClient extends TypedEventEmitter<MqttClientEventCallbacks> {
 		if (this.client) {
 			this.client.publish(
 				this.getClientTopic(MqttClient.VERSION_TOPIC),
-				JSON.stringify({ value: appVersion, time: Date.now() }),
+				JSON.stringify({ value: pkgJson.version, time: Date.now() }),
 				{ retain: this.config.retain, qos: this.config.qos },
 			)
 		}
@@ -353,7 +358,7 @@ class MqttClient extends TypedEventEmitter<MqttClientEventCallbacks> {
 			clean: config.clean,
 			rejectUnauthorized: !config.allowSelfsigned,
 			will: {
-				topic: this.getClientTopic(MqttClient.STATUS_TOPIC),
+				topic: this.getStatusTopic(),
 				payload: JSON.stringify({ value: false }) as any,
 				qos: this.config.qos,
 				retain: this.config.retain,
@@ -378,10 +383,8 @@ class MqttClient extends TypedEventEmitter<MqttClientEventCallbacks> {
 			await this.storeManager.open()
 
 			// no reason to use a memory store for incoming messages
-			options.incomingStore = this.storeManager
-				.incoming as unknown as IStore
-			options.outgoingStore = this.storeManager
-				.outgoing as unknown as IStore
+			options.incomingStore = this.storeManager.incoming
+			options.outgoingStore = this.storeManager.outgoing
 		}
 
 		if (config.auth) {

@@ -34,7 +34,14 @@
 						:color="item.path === $route.path ? 'primary' : ''"
 					>
 						<v-list-item-action>
-							<v-icon>{{ item.icon }}</v-icon>
+							<v-badge
+								color="red"
+								:value="item.badge"
+								:content="item.badge"
+								dot
+							>
+								<v-icon>{{ item.icon }}</v-icon>
+							</v-badge>
 						</v-list-item-action>
 						<v-list-item-content>
 							<v-list-item-title
@@ -79,7 +86,10 @@
 
 				<v-spacer></v-spacer>
 
-				<v-tooltip v-if="appInfo.controllerStatus" bottom>
+				<v-tooltip
+					v-if="zwave.enabled && appInfo.controllerStatus"
+					bottom
+				>
 					<template v-slot:activator="{ on }">
 						<div
 							v-on="on"
@@ -104,6 +114,24 @@
 					</div>
 				</v-tooltip>
 
+				<v-tooltip
+					v-if="zwave.enabled && appInfo.controllerStatus"
+					bottom
+				>
+					<template v-slot:activator="{ on }">
+						<v-icon
+							class="ml-3"
+							dark
+							medium
+							style="cursor: default"
+							:color="inclusionState.color"
+							v-on="on"
+							>{{ inclusionState.icon }}</v-icon
+						>
+					</template>
+					<span>{{ inclusionState.message }}</span>
+				</v-tooltip>
+
 				<v-tooltip bottom>
 					<template v-slot:activator="{ on }">
 						<v-icon
@@ -119,7 +147,7 @@
 					<span>{{ status }}</span>
 				</v-tooltip>
 
-				<v-tooltip bottom open-on-click>
+				<v-tooltip z-index="9999" bottom open-on-click>
 					<template v-slot:activator="{ on }">
 						<v-icon
 							dark
@@ -242,13 +270,25 @@
 		</div>
 		<main style="height: 100%">
 			<v-main style="height: 100%">
-				<router-view
-					v-if="auth !== undefined"
-					@import="importFile"
-					@export="exportConfiguration"
-					@showConfirm="confirm"
-					:socket="socket"
-				/>
+				<template v-if="auth !== undefined">
+					<router-view
+						v-if="inited || !skeletons"
+						@import="importFile"
+						@export="exportConfiguration"
+						@showConfirm="confirm"
+						:socket="socket"
+					/>
+					<!-- put some skeleton loaders while fetching settings -->
+					<v-container v-else>
+						<v-skeleton-loader
+							v-for="(s, i) in skeletons"
+							:key="`skeleton-${i}`"
+							:type="s"
+							:loading="true"
+						></v-skeleton-loader>
+					</v-container>
+				</template>
+				<!-- Show loading splash screen while checking for auth -->
 				<v-row
 					style="height: 100%"
 					align="center"
@@ -285,7 +325,9 @@
 						Made with &#10084;&#65039; by
 						<strong class="ml-1 mr-2">Daniel Lando</strong>-
 						Enjoying it?&nbsp;
-						<a href="https://github.com/sponsors/robertsLando"
+						<a
+							target="_blank"
+							href="https://github.com/sponsors/robertsLando"
 							>Support me &#128591;</a
 						>
 					</v-col>
@@ -301,6 +343,8 @@
 		/>
 
 		<Confirm ref="confirm"></Confirm>
+		<!-- Used for node added only -->
+		<Confirm ref="confirm2"></Confirm>
 
 		<LoaderDialog
 			v-model="dialogLoader"
@@ -326,7 +370,7 @@
 					{{ message.title }}
 				</p>
 				<p
-					style="margin-bottom: 0; white-space: pre-line"
+					style="margin-bottom: 0; white-space: pre-wrap"
 					v-text="
 						typeof message === 'object' ? message.text : message
 					"
@@ -396,8 +440,10 @@ import {
 	getEnumMemberName,
 	SecurityBootstrapFailure,
 	FirmwareUpdateStatus,
+	InclusionState,
 } from 'zwave-js/safe'
 import DialogNodesManager from '@/components/dialogs/DialogNodesManager.vue'
+import { uuid } from './lib/utils'
 
 let socketQueue = []
 
@@ -418,19 +464,142 @@ export default {
 			'auth',
 			'appInfo',
 			'controllerNode',
+			'zniffer',
+			'zwave',
+			'znifferState',
+			'inited',
 		]),
 		...mapState(useBaseStore, {
 			darkMode: (store) => store.ui.darkMode,
 			navTabs: (store) => store.ui.navTabs,
 		}),
+		skeletons() {
+			// return the skeletons array based on actual route
+			const route = this.$route.path
+
+			switch (route) {
+				case Routes.controlPanel:
+					return ['actions', 'table']
+				case Routes.settings:
+					return ['list-item-two-line@10']
+				case Routes.store:
+					return ['list-item-two-line@10', 'divider']
+				case Routes.mesh:
+					return ['list-item-two-line, image']
+				case Routes.zniffer:
+				case Routes.debug:
+				case Routes.scenes:
+				case Routes.smartStart:
+					return ['table']
+				default:
+					return null
+			}
+		},
+		pages() {
+			const pages = [
+				{ icon: 'settings', title: 'Settings', path: Routes.settings },
+				{ icon: 'bug_report', title: 'Debug', path: Routes.debug },
+				{ icon: 'folder', title: 'Store', path: Routes.store },
+			]
+
+			if (this.zwave?.enabled) {
+				pages.unshift(
+					{
+						icon: 'widgets',
+						title: 'Control Panel',
+						path: Routes.controlPanel,
+					},
+					{
+						icon: 'qr_code_scanner',
+						title: 'Smart Start',
+						path: Routes.smartStart,
+					},
+				)
+
+				pages.splice(3, 0, {
+					icon: 'movie_filter',
+					title: 'Scenes',
+					path: Routes.scenes,
+				})
+
+				pages.push({
+					icon: 'share',
+					title: 'Network graph',
+					path: Routes.mesh,
+				})
+			}
+
+			if (this.zniffer?.enabled) {
+				pages.push({
+					icon: 'preview',
+					title: 'Zniffer',
+					path: Routes.zniffer,
+					badge: this.znifferState?.started ? 1 : 0,
+				})
+			}
+
+			for (const p of pages) {
+				if (p.badge === undefined) {
+					p.badge = 0
+				}
+			}
+
+			return pages
+		},
 		updateAvailable() {
 			return this.appInfo.newConfigVersion ? 1 : 0
+		},
+		inclusionState() {
+			const state = this.appInfo.controllerStatus?.inclusionState
+
+			const toReturn = {
+				icon: 'help',
+				color: 'grey',
+				message: 'Unknown state',
+			}
+
+			switch (state) {
+				case InclusionState.Idle:
+					toReturn.message = 'Controller is idle'
+					toReturn.icon = 'notifications_paused'
+					toReturn.color = 'grey'
+					break
+				case InclusionState.Including:
+					toReturn.message = 'Inclusion is active'
+					toReturn.icon = 'all_inclusive'
+					toReturn.color = 'purple'
+					break
+				case InclusionState.Excluding:
+					toReturn.message = 'Exclusion is active'
+					toReturn.icon = 'cancel'
+					toReturn.color = 'red'
+					break
+				case InclusionState.Busy:
+					toReturn.message =
+						'Waiting for inclusion/exclusion to complete...'
+					toReturn.icon = 'hourglass_bottom'
+					toReturn.color = 'yellow'
+					break
+				case InclusionState.SmartStart:
+					toReturn.message = 'SmartStart inclusion is active'
+					toReturn.icon = 'auto_fix_normal'
+					toReturn.color = 'primary'
+					break
+			}
+
+			return toReturn
 		},
 	},
 	watch: {
 		$route: function (value) {
 			this.title = value.name || ''
 			this.startSocket()
+		},
+		darkMode(val) {
+			this.$vuetify.theme.dark = !!val
+		},
+		pages() {
+			// this.verifyRoute()
 		},
 		controllerNode(node) {
 			if (!node) return
@@ -492,23 +661,6 @@ export default {
 					tooltip: 'Logout',
 				},
 			],
-			pages: [
-				{
-					icon: 'widgets',
-					title: 'Control Panel',
-					path: Routes.controlPanel,
-				},
-				{
-					icon: 'qr_code_scanner',
-					title: 'Smart Start',
-					path: Routes.smartStart,
-				},
-				{ icon: 'settings', title: 'Settings', path: Routes.settings },
-				{ icon: 'movie_filter', title: 'Scenes', path: Routes.scenes },
-				{ icon: 'bug_report', title: 'Debug', path: Routes.debug },
-				{ icon: 'folder', title: 'Store', path: Routes.store },
-				{ icon: 'share', title: 'Network graph', path: Routes.mesh },
-			],
 			status: '',
 			statusColor: '',
 			drawer: false,
@@ -520,9 +672,30 @@ export default {
 		}
 	},
 	methods: {
-		showNodesManager(step) {
+		verifyRoute() {
+			// ensure the actual route is available in pages otherwise redirect to the first one
+			if (
+				this.$route.meta.requiresAuth &&
+				this.pages.findIndex((p) => p.path === this.$route.path) === -1
+			) {
+				const preferred = ['control-panel', 'zniffer', 'settings']
+
+				const allowed = this.pages.filter((p) =>
+					preferred.includes(p.path),
+				)
+
+				const path = allowed.length ? allowed[0].path : undefined
+
+				if (path) {
+					this.$router.replace(path)
+				} else {
+					this.$router.replace(this.pages[0].path)
+				}
+			}
+		},
+		showNodesManager(stepOrStepsValues) {
 			// used in ControlPanel.vue
-			this.$refs.nodesManager.show(step)
+			this.$refs.nodesManager.show(stepOrStepsValues)
 		},
 		onGrantSecurityClasses(requested) {
 			if (this.nodesManagerDialog) {
@@ -535,7 +708,8 @@ export default {
 			'init',
 			'initNodes',
 			'setAppInfo',
-			'setUser',
+			'setZnifferState',
+			'onUserLogged',
 			'updateValue',
 			'setValue',
 			'removeValue',
@@ -544,6 +718,7 @@ export default {
 			'addNodeEvent',
 			'updateNode',
 			'removeNode',
+			'setZnifferState',
 		]),
 		copyVersion() {
 			const el = document.createElement('textarea')
@@ -566,7 +741,7 @@ export default {
 				)
 				if (response.success) {
 					this.closePasswordDialog()
-					this.setUser(response.user)
+					this.onUserLogged(response.user)
 				}
 			} catch (error) {
 				this.showSnackbar(
@@ -585,19 +760,19 @@ export default {
 		},
 		async onNodeAdded({ node, result }) {
 			if (!this.nodesManagerDialog) {
-				await this.confirm(
+				await this.confirm2(
 					'Node added',
 					`<div class="d-flex flex-column align-center col">
 					<i aria-hidden="true" class="v-icon notranslate material-icons theme--light success--text" style="font-size: 60px;">check_circle</i>
 					<p class="mt-3 headline text-center">
-						Node ${node.id} added with security "${node.security || 'None'} ${
+						Node ${node.id} added with security ${node.security || 'None'}${
 							result.lowSecurityReason
 								? ` (${getEnumMemberName(
 										SecurityBootstrapFailure,
 										result.lowSecurityReason,
-								  )})`
+									)})`
 								: ''
-						}"
+						}
 					</p>
 				</div>`,
 					'info',
@@ -631,6 +806,18 @@ export default {
 			options.color = options.color || levelMap[level] || 'primary'
 
 			return this.$refs.confirm.open(title, text, options)
+		},
+		async confirm2(title, text, level, options) {
+			options = options || {}
+
+			const levelMap = {
+				warning: 'orange',
+				alert: 'red',
+			}
+
+			options.color = options.color || levelMap[level] || 'primary'
+
+			return this.$refs.confirm2.open(title, text, options)
 		},
 		showSnackbar: function (text, color, timeout) {
 			const message = {
@@ -728,23 +915,6 @@ export default {
 					newVersion ? 'Installation started' : 'Check requested',
 				)
 			}
-		},
-		changeThemeColor: function () {
-			const metaThemeColor = document.querySelector(
-				'meta[name=theme-color]',
-			)
-			const metaThemeColor2 = document.querySelector(
-				'meta[name=msapplication-TileColor]',
-			)
-
-			metaThemeColor.setAttribute(
-				'content',
-				this.darkMode ? '#000' : '#fff',
-			)
-			metaThemeColor2.setAttribute(
-				'content',
-				this.darkMode ? '#000' : '#fff',
-			)
 		},
 		importFile: function (ext) {
 			const self = this
@@ -845,7 +1015,7 @@ export default {
 							'Z-Wave JS UI',
 							`<h3 style="white-space:pre" class="text-center">If you are seeing this message it means that you are using the old <code>zwavejs2mqtt</code> docker tag.\nStarting from 8.0.0 version it is <b>DEPRECATED</b>, please use the new <code>zwave-js-ui</code> tag.</h3>
 						<p class="mt-4 text-center">
-						You can find more info about this change in <a href="https://github.com/zwave-js/zwavejs2mqtt/releases/tag/v8.0.0" target="_blank">v8.0.0 CHANGELOG</a>.
+						You can find more info about this change in <a target="_blank" href="https://github.com/zwave-js/zwavejs2mqtt/releases/tag/v8.0.0">v8.0.0 CHANGELOG</a>.
 						</p>`,
 							'info',
 							{
@@ -906,9 +1076,11 @@ export default {
 		},
 		onInit(data) {
 			this.setAppInfo(data.info)
+			this.setZnifferState(data.zniffer)
 			this.setControllerStatus({
 				error: data.error,
 				status: data.cntStatus,
+				inclusionState: data.inclusionState,
 			})
 			// convert node values in array
 			this.initNodes(data.nodes)
@@ -1025,6 +1197,10 @@ export default {
 				socketEvents.grantSecurityClasses,
 				this.onGrantSecurityClasses.bind(this),
 			)
+
+			this.socket.on(socketEvents.znifferState, (data) => {
+				this.setZnifferState(data)
+			})
 			// don't await this, will cause a loop of calls
 			this.getConfig()
 		},
@@ -1079,6 +1255,17 @@ export default {
 					this.startSocket()
 				}
 			} catch (error) {
+				// in case of a redirect (302) trigger a page reload
+				// needed to fix external auth issues #3427
+				const statusCode = error.response?.status
+				if (
+					[302, 401].includes(statusCode) ||
+					error.response?.type === 'opaqueredirect'
+				) {
+					// reload current page, be sure this doesn't hits cache, add a random query param
+					location.search = `?auth=${uuid()}`
+					return
+				}
 				setTimeout(() => (this.error = error.message), 1000)
 				log.error(error)
 			}
@@ -1294,7 +1481,7 @@ export default {
 									.render(release.body)
 									.replace(
 										/#(\d+)/g,
-										'<a href="https://github.com/zwave-js/node-zwave-js/pull/$1">#$1</a>',
+										'<a target="_blank" href="https://github.com/zwave-js/node-zwave-js/pull/$1">#$1</a>',
 									)
 
 								return `${
@@ -1326,7 +1513,7 @@ export default {
 									)
 									.replace(
 										/#(\d+)/g,
-										'<a href="https://github.com/zwave-js/zwave-js-server/pull/$1">#$1</a>',
+										'<a target="_blank" href="https://github.com/zwave-js/zwave-js-server/pull/$1">#$1</a>',
 									)
 
 								// remove everything after "⬆️ Dependencies"
@@ -1349,6 +1536,15 @@ export default {
 
 						changelog += serverChangelogs.join('')
 					}
+
+					// ensure all links are opened in new tab
+					changelog = changelog.replace(
+						/<a href="/g,
+						'<a target="_blank" href="',
+					)
+
+					// downgrades could create empty changelogs
+					if (!changelog.trim()) return
 
 					// means we never saw the changelog for this version
 					const result = await this.confirm(
@@ -1388,15 +1584,27 @@ export default {
 			this.toggleDrawer()
 		}
 
-		const hash = window.location.hash.substr(1)
-
-		if (hash === 'no-topbar') {
+		if (window.location.hash.includes('#no-topbar')) {
 			this.hideTopbar = true
 		}
 
-		this.$vuetify.theme.dark = this.darkMode
+		const settings = useBaseStore().settings
 
-		this.changeThemeColor()
+		// system dark mode
+		const systemThemeDark = !!window.matchMedia(
+			'(prefers-color-scheme: dark)',
+		).matches
+
+		// set the dark mode to the system dark mode if it's different
+		if (settings.load('dark') === undefined) {
+			useBaseStore().setDarkMode(systemThemeDark)
+		} else {
+			// load the theme from localstorage
+			// this is needed to prevent the theme switch on load
+			// this will be overriden by settings value once `initSettings`
+			// base store method is called
+			this.$vuetify.theme.dark = settings.load('dark', false)
+		}
 
 		useBaseStore().$onAction(({ name, args }) => {
 			if (name === 'showSnackbar') {

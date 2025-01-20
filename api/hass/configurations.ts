@@ -18,6 +18,21 @@ type HassDeviceKey =
 	| 'thermostat'
 	| 'fan'
 	| 'sound_switch'
+	| 'config_switch'
+	| 'config_number'
+
+// https://github.com/home-assistant/core/blob/2e76b1f834ea26ef3e1726930812cb4c2ea82518/homeassistant/components/light/__init__.py#L65C1-L81C48
+export type ColorMode =
+	| 'unknown'
+	| 'onoff'
+	| 'brightness'
+	| 'color_temp'
+	| 'hs'
+	| 'xy'
+	| 'rgb'
+	| 'rgbw'
+	| 'rgbww'
+	| 'white'
 
 const configurations: Record<HassDeviceKey, HassDevice> = {
 	// Binary sensor https://www.home-assistant.io/components/binary_sensor.mqtt
@@ -130,6 +145,7 @@ const configurations: Record<HassDeviceKey, HassDevice> = {
 			position_closed: 0,
 			payload_open: '99',
 			payload_close: '0',
+			payload_stop: 'stop',
 		},
 	},
 	// Barrier operator support for zwave-js (numeric commands/states)
@@ -216,6 +232,31 @@ const configurations: Record<HassDeviceKey, HassDevice> = {
 			payload_on: 25,
 			state_value_template: '{{ value_json.value | int }}',
 			speed_value_template: '{{ value_json.value | int }}',
+		},
+	},
+
+	config_switch: {
+		type: 'switch',
+		object_id: 'config_switch',
+		discovery_payload: {
+			payload_off: '0',
+			payload_on: '1',
+			value_template: '{{ value_json.value }}',
+			command_topic: true,
+			enabled_by_default: false,
+			entity_category: 'config',
+		},
+	},
+
+	// https://www.home-assistant.io/integrations/number.mqtt
+	config_number: {
+		type: 'number',
+		object_id: 'config_number',
+		discovery_payload: {
+			value_template: '{{ value_json.value }}',
+			command_topic: true,
+			enabled_by_default: false,
+			entity_category: 'config',
 		},
 	},
 }

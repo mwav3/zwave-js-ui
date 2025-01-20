@@ -1,11 +1,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import * as utils from '../lib/utils'
+import * as utils from './utils'
 import { AlarmSensorType, SetValueAPIOptions } from 'zwave-js'
 import { CommandClasses, ValueID } from '@zwave-js/core'
 import * as Constants from './Constants'
-import { LogLevel, module } from '../lib/logger'
-import hassCfg from '../hass/configurations'
+import { LogLevel, module } from './logger'
+import hassCfg, { ColorMode } from '../hass/configurations'
 import hassDevices from '../hass/devices'
 import { storeDir } from '../config/app'
 import { IClientPublishOptions } from 'mqtt'
@@ -280,8 +280,10 @@ export default class Gateway {
 		}
 
 		if (this._zwave) {
-			// this is the only event we need to bind to in order to apply gateway values configs like polling
+			// needed in order to apply gateway values configs like polling
 			this._zwave.on('nodeInited', this._onNodeInited.bind(this))
+			// needed to init scheduled jobs
+			this._zwave.on('driverStatus', this._onDriverStatus.bind(this))
 
 			if (this.mqttEnabled) {
 				this._zwave.on('nodeStatus', this._onNodeStatus.bind(this))
@@ -293,7 +295,6 @@ export default class Gateway {
 				this._zwave.on('valueChanged', this._onValueChanged.bind(this))
 				this._zwave.on('nodeRemoved', this._onNodeRemoved.bind(this))
 				this._zwave.on('notification', this._onNotification.bind(this))
-				this._zwave.on('driverStatus', this._onDriverStatus.bind(this))
 
 				if (this.config.sendEvents) {
 					this._zwave.on('event', this._onEvent.bind(this))
@@ -393,6 +394,11 @@ export default class Gateway {
 				payload = payload ? 0xff : valueId.min
 			}
 
+			// 1/0 becomes true/false
+			if (typeof payload === 'number' && valueId.type === 'boolean') {
+				payload = payload > 0
+			}
+
 			if (
 				valueId.commandClass === CommandClasses['Binary Toggle Switch']
 			) {
@@ -424,6 +430,26 @@ export default class Gateway {
 					) {
 						// for other command classes use the mode_map
 						payload = hassDevice.mode_map[payload]
+					}
+				} else if (
+					hassDevice.type === 'cover' &&
+					valueId.property === 'targetValue'
+				) {
+					// ref issue https://github.com/zwave-js/zwave-js-ui/issues/3862
+					if (
+						payload ===
+						(hassDevice.discovery_payload.payload_stop ?? 'STOP')
+					) {
+						this._zwave
+							.writeValue(
+								{
+									...valueId,
+									property: 'Up',
+								},
+								false,
+							)
+							.catch(() => {})
+						return null
 					}
 				}
 			}
@@ -904,7 +930,7 @@ export default class Gateway {
 										node,
 										node.values[v],
 									) as string,
-							  )
+								)
 							: null
 					}
 
@@ -929,6 +955,8 @@ export default class Gateway {
 
 					// Set device information using node info
 					payload.device = this._deviceInfo(node, nodeName)
+
+					this.setDiscoveryAvailability(node, payload)
 
 					hassDevice.object_id = utils
 						.sanitizeTopic(hassDevice.object_id, true)
@@ -1229,6 +1257,10 @@ export default class Gateway {
 
 			const cmdClass = valueId.commandClass
 
+			const deviceClass =
+				node.endpoints[valueId.endpoint]?.deviceClass ??
+				node.deviceClass
+
 			switch (cmdClass) {
 				case CommandClasses['Binary Switch']:
 				case CommandClasses['All Switch']:
@@ -1248,8 +1280,8 @@ export default class Gateway {
 					if (valueId.isCurrentValue) {
 						const specificDeviceClass =
 							Constants.specificDeviceClass(
-								node.deviceClass.generic,
-								node.deviceClass.specific,
+								deviceClass.generic,
+								deviceClass.specific,
 							)
 						// Use a cover_position configuration if ...
 						if (
@@ -1258,6 +1290,7 @@ export default class Gateway {
 								'specific_type_class_b_motor_control',
 								'specific_type_class_c_motor_control',
 								'specific_type_class_motor_multiposition',
+								'specific_type_motor_multiposition',
 							].includes(specificDeviceClass) ||
 							node.deviceId === '615-0-258' // Issue #3088
 						) {
@@ -1274,6 +1307,9 @@ export default class Gateway {
 							cfg.discovery_payload.payload_close = 0
 						} else {
 							cfg = utils.copy(hassCfg.light_dimmer)
+							cfg.discovery_payload.supported_color_modes = [
+								'brightness',
+							] as ColorMode[]
 							cfg.discovery_payload.brightness_state_topic =
 								getTopic
 							cfg.discovery_payload.brightness_command_topic =
@@ -1320,6 +1356,10 @@ export default class Gateway {
 						valueId.property,
 						valueId.propertyKey,
 					)
+					if (valueId.value?.unit) {
+						cfg.discovery_payload.value_template =
+							"{{ value_json.value.value | default('') }}"
+					}
 					break
 				case CommandClasses['Binary Sensor']: {
 					// https://github.com/zwave-js/node-zwave-js/blob/master/packages/zwave-js/src/lib/commandclass/BinarySensorCC.ts#L41
@@ -1558,7 +1598,6 @@ export default class Gateway {
 						if (valueId.ccSpecific) {
 							sensor = Constants.meterType(
 								valueId.ccSpecific as IMeterCCSpecific,
-								this._zwave.driver.configManager,
 							)
 
 							sensor.objectId += '_' + valueId.property
@@ -1632,9 +1671,25 @@ export default class Gateway {
 						sensor.objectId,
 					)
 
+					let unit = null
 					// https://github.com/zwave-js/node-zwave-js/blob/master/packages/config/config/scales.json
 					if (valueId.unit) {
-						cfg.discovery_payload.unit_of_measurement = valueId.unit
+						unit = valueId.unit
+					} else if (valueId.value?.unit) {
+						unit = valueId.value.unit
+					}
+
+					if (unit) {
+						// Home Assistant requires time units to be abbreviated
+						// https://github.com/home-assistant/core/blob/d7ac4bd65379e11461c7ce0893d3533d8d8b8cbf/homeassistant/const.py#L408
+						if (unit === 'seconds') {
+							unit = 's'
+						} else if (unit === 'minutes') {
+							unit = 'min'
+						} else if (unit === 'hours') {
+							unit = 'h'
+						}
+						cfg.discovery_payload.unit_of_measurement = unit
 					}
 
 					Object.assign(cfg.discovery_payload, sensor.props || {})
@@ -1648,6 +1703,55 @@ export default class Gateway {
 						}
 						if (valueConf.icon)
 							cfg.discovery_payload.icon = valueConf.icon
+					}
+					break
+				}
+				case CommandClasses.Configuration: {
+					if (
+						!valueId.writeable ||
+						process.env.DISCOVERY_DISABLE_CC_CONFIGURATION ===
+							'true'
+					) {
+						return
+					}
+					let type = valueId.type
+					if (
+						type === 'number' &&
+						valueId.min === 0 &&
+						valueId.max === 1
+					) {
+						type = 'boolean'
+					}
+					switch (type) {
+						case 'boolean':
+							cfg = utils.copy(hassCfg.config_switch)
+
+							// Combine unique Object id, by using all possible scenarios
+							cfg.object_id = utils.joinProps(
+								cfg.object_id,
+								valueId.property,
+								valueId.propertyKey,
+							)
+							break
+						case 'number':
+							cfg = utils.copy(hassCfg.config_number)
+
+							// Combine unique Object id, by using all possible scenarios
+							cfg.object_id = utils.joinProps(
+								cfg.object_id,
+								valueId.property,
+								valueId.propertyKey,
+							)
+							if (valueId.min !== 1) {
+								cfg.discovery_payload.min = valueId.min
+							}
+							if (valueId.max !== 100) {
+								cfg.discovery_payload.max = valueId.max
+							}
+
+							break
+						default:
+							return
 					}
 					break
 				}
@@ -1670,10 +1774,8 @@ export default class Gateway {
 				payload.command_topic = setTopic || getTopic + '/set'
 			}
 
-			// Set availability topic using node status topic
-			// payload.availability_topic = this.mqtt.getTopic(this.nodeTopic(node)) + '/status/hass'
-			// payload.payload_available = true
-			// payload.payload_not_available = false
+			this.setDiscoveryAvailability(node, payload)
+
 			if (
 				['binary_sensor', 'sensor', 'lock', 'climate', 'fan'].includes(
 					cfg.type,
@@ -1950,9 +2052,16 @@ export default class Gateway {
 				valueId.conf = valueConf
 			}
 
-			this.topicValues[topic] = valueId.targetValue
-				? node.values[valueId.targetValue]
-				: valueId
+			// handle the case the conf is set on current value but not in target value
+			if (valueId.targetValue && node.values[valueId.targetValue]) {
+				const targetValueId = utils.copy(
+					node.values[valueId.targetValue],
+				)
+				targetValueId.conf = valueConf
+				this.topicValues[topic] = targetValueId
+			} else {
+				this.topicValues[topic] = valueId
+			}
 		}
 
 		let mqttOptions: IClientPublishOptions = valueId.stateless
@@ -2110,7 +2219,6 @@ export default class Gateway {
 
 	/**
 	 * Driver status updates
-	 *
 	 */
 	private _onDriverStatus(ready: boolean): void {
 		logger.info(`Driver is ${ready ? 'READY' : 'CLOSED'}`)
@@ -2125,7 +2233,9 @@ export default class Gateway {
 			}
 		}
 
-		this._mqtt.publish('driver/status', ready)
+		if (this.mqttEnabled) {
+			this._mqtt.publish('driver/status', ready)
+		}
 	}
 
 	/**
@@ -2181,7 +2291,7 @@ export default class Gateway {
 	}
 
 	/**
-	 * Handle broadcast request reeived from Mqtt client
+	 * Handle broadcast request received from Mqtt client
 	 */
 	private async _onBroadRequest(
 		parts: string[],
@@ -2200,6 +2310,11 @@ export default class Gateway {
 					this.topicValues[values[0]],
 					this.topicValues[values[0]].conf,
 				)
+
+				if (payload === null) {
+					return
+				}
+
 				for (let i = 0; i < values.length; i++) {
 					await this._zwave.writeValue(
 						this.topicValues[values[i]],
@@ -2221,7 +2336,11 @@ export default class Gateway {
 				logger.error('Invalid valueId: ' + error)
 				return
 			}
-			await this._zwave.writeBroadcast(payload, payload.value)
+			await this._zwave.writeBroadcast(
+				payload,
+				payload.value,
+				payload.options,
+			)
 		}
 	}
 
@@ -2238,6 +2357,11 @@ export default class Gateway {
 
 		if (valueId) {
 			const value = this.parsePayload(payload, valueId, valueId.conf)
+
+			if (value === null) {
+				return
+			}
+
 			await this._zwave.writeValue(valueId, value, payload?.options)
 		} else {
 			logger.debug(`No writeable valueId found for ${valueTopic}`)
@@ -2245,7 +2369,11 @@ export default class Gateway {
 	}
 
 	private async _onMulticastRequest(
-		payload: ZUIValueId & { nodes: number[]; value: any },
+		payload: ZUIValueId & {
+			nodes: number[]
+			value: any
+			options?: SetValueAPIOptions
+		},
 	): Promise<void> {
 		const nodes = payload.nodes
 		const valueId: ValueID = {
@@ -2273,7 +2401,12 @@ export default class Gateway {
 			return
 		}
 
-		await this._zwave.writeMulticast(nodes, valueId as ZUIValueId, value)
+		await this._zwave.writeMulticast(
+			nodes,
+			valueId as ZUIValueId,
+			value,
+			payload.options,
+		)
 	}
 
 	/**
@@ -2366,6 +2499,36 @@ export default class Gateway {
 			name: nodeName,
 			sw_version: node.firmwareVersion || utils.getVersion(),
 		}
+	}
+
+	private setDiscoveryAvailability(
+		node: ZUINode,
+		payload: { [key: string]: any },
+	) {
+		// Set availability config using node status topic, client status topic
+		// (which is the LWT), and driver status topic
+		payload.availability = [
+			{
+				payload_available: 'true',
+				payload_not_available: 'false',
+				topic: this.mqtt.getTopic(this.nodeTopic(node)) + '/status',
+			},
+			{
+				topic: this.mqtt.getStatusTopic(),
+				value_template:
+					"{{'online' if value_json.value else 'offline'}}",
+			},
+			{
+				payload_available: 'true',
+				payload_not_available: 'false',
+				topic: this.mqtt.getTopic('driver/status'),
+			},
+		]
+		if (this.config.payloadType !== PAYLOAD_TYPE.RAW) {
+			payload.availability[0].value_template =
+				"{{'true' if value_json.value else 'false'}}"
+		}
+		payload.availability_mode = 'all'
 	}
 
 	/**
@@ -2515,6 +2678,12 @@ export default class Gateway {
 
 		const endpoint = currentColorValue.endpoint
 
+		const supportedColors: ColorMode[] = []
+
+		cfg.discovery_payload.supported_color_modes = supportedColors
+
+		supportedColors.push('rgb')
+
 		// current color values are automatically added later in discoverValue function
 		cfg.values = []
 
@@ -2538,10 +2707,11 @@ export default class Gateway {
 			switchValue = `37-${endpoint}-currentValue`
 		}
 
-		/* Find the control switch of the device Brightness or Binary
-     If multilevel is not there use binary
-     Some devices use also endpoint + 1 as on/off/brightness... try to guess that too!
-  */
+		/* 
+			Find the control switch of the device Brightness or Binary
+			If multilevel is not there use binary
+			Some devices use also endpoint + 1 as on/off/brightness... try to guess that too!
+		*/
 		let discoveredStateTopic: string
 		let discoveredCommandTopic: string
 
@@ -2569,12 +2739,14 @@ export default class Gateway {
 		}
 
 		if (brightnessValue) {
+			supportedColors.push('brightness')
 			cfg.discovery_payload.brightness_state_topic = discoveredStateTopic
 			cfg.discovery_payload.brightness_command_topic =
 				discoveredCommandTopic
 			cfg.discovery_payload.state_topic = discoveredStateTopic
 			cfg.discovery_payload.command_topic = discoveredCommandTopic
 		} else if (switchValue) {
+			supportedColors.push('onoff')
 			cfg.discovery_payload.state_topic = discoveredStateTopic
 			cfg.discovery_payload.command_topic = discoveredCommandTopic
 
@@ -2587,6 +2759,7 @@ export default class Gateway {
 
 		// if whitevalue exists, use currentColor value to get/set white
 		if (whiteValue && currentColorValue) {
+			supportedColors.push('white')
 			// still use currentColor but change the template
 			cfg.discovery_payload.color_temp_state_topic =
 				cfg.discovery_payload.rgb_state_topic

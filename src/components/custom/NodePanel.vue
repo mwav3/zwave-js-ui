@@ -23,6 +23,12 @@
 					}}</v-list-item-content>
 				</v-list-item>
 				<v-list-item dense>
+					<v-list-item-content>Protocol</v-list-item-content>
+					<v-list-item-content class="align-end">{{
+						getProtocol(node)
+					}}</v-list-item-content>
+				</v-list-item>
+				<v-list-item dense>
 					<v-list-item-content>Code</v-list-item-content>
 					<v-list-item-content class="align-end">{{
 						node.productLabel
@@ -52,7 +58,7 @@
 						node.loc
 					}}</v-list-item-content>
 				</v-list-item>
-				<v-list-item v-if="node.neighbors">
+				<v-list-item v-if="node.neighbors && !isLongRange">
 					<v-list-item-content>Neighbors</v-list-item-content>
 					<v-list-item-content class="align-end"
 						>{{
@@ -93,7 +99,7 @@
 					</div>
 
 					<div v-if="nlwr">
-						<v-subheader>Next Last working route</v-subheader>
+						<v-subheader>Next to Last working route</v-subheader>
 						<v-list-item dense v-for="(s, i) in nlwr" :key="i">
 							<v-list-item-content>{{
 								s.title
@@ -104,7 +110,7 @@
 						</v-list-item>
 					</div> -->
 
-				<div v-if="!node.isControllerNode">
+				<div v-if="!node.isControllerNode && !isLongRange">
 					<v-subheader
 						>Priority route
 						<v-btn
@@ -135,7 +141,7 @@
 							<v-icon x-small>route</v-icon>
 						</v-btn>
 					</v-subheader>
-					<div v-if="appRoute" class="text-caption">
+					<div v-if="appRoute && !isLongRange" class="text-caption">
 						<v-list-item dense v-for="(s, i) in appRoute" :key="i">
 							<v-list-item-content>{{
 								s.title
@@ -148,7 +154,7 @@
 					<p class="text-center" v-else>None</p>
 				</div>
 
-				<div v-if="!node.isControllerNode">
+				<div v-if="!node.isControllerNode && !isLongRange">
 					<v-subheader
 						>Return routes
 						<v-btn
@@ -289,6 +295,16 @@
 				</v-col>
 				<v-col class="pa-1">
 					<v-btn
+						color="purple"
+						small
+						rounded
+						@click="dialogLinkReliability = true"
+						>Link Statistics
+						<v-icon>leak_add</v-icon>
+					</v-btn>
+				</v-col>
+				<v-col v-if="!isLongRange" class="pa-1">
+					<v-btn
 						color="error"
 						small
 						rounded
@@ -329,11 +345,21 @@
 			</v-row>
 		</v-col>
 		<dialog-health-check
+			v-if="node && !node.isControllerNode"
 			v-model="dialogHealth"
 			@close="dialogHealth = false"
 			:socket="socket"
 			:node="node"
 		/>
+
+		<dialog-link-reliability
+			v-if="node && !node.isControllerNode"
+			v-model="dialogLinkReliability"
+			@close="dialogLinkReliability = false"
+			:socket="socket"
+			:node="node"
+		/>
+
 		<v-dialog
 			fullscreen
 			persistent
@@ -374,14 +400,14 @@ import {
 	isRssiError,
 	rssiToString,
 } from 'zwave-js/safe'
-import { zwaveDataRateToString } from '@zwave-js/core/safe'
+import { Protocols, zwaveDataRateToString } from '@zwave-js/core/safe'
 import draggable from 'vuedraggable'
 
 import { Routes } from '../../router/index.js'
 import InstancesMixin from '../../mixins/InstancesMixin.js'
 import { mapActions, mapState } from 'pinia'
 import useBaseStore from '../../stores/base.js'
-import { copy } from '../../lib/utils'
+import { copy, getProtocol } from '../../lib/utils'
 
 export default {
 	mixins: [InstancesMixin],
@@ -391,6 +417,8 @@ export default {
 		BgRssiChart: () => import('@/components/custom/BgRssiChart.vue'),
 		DialogHealthCheck: () =>
 			import('@/components/dialogs/DialogHealthCheck.vue'),
+		DialogLinkReliability: () =>
+			import('@/components/dialogs/DialogLinkReliability.vue'),
 		draggable,
 	},
 	props: {
@@ -409,9 +437,11 @@ export default {
 	data: () => ({
 		showFullscreen: false,
 		dialogHealth: false,
+		dialogLinkReliability: false,
 		discoverLoading: false,
 		routesChanged: false,
 		returnRoutes: [],
+		Protocols,
 		dataRateItems: [
 			{
 				text: '100 Kbps',
@@ -482,6 +512,11 @@ export default {
 
 			return routeStats
 		},
+		isLongRange() {
+			if (!this.node) return false
+
+			return this.node.protocol === Protocols.ZWaveLongRange
+		},
 	},
 	watch: {
 		nodeReturnRoutes: {
@@ -494,6 +529,7 @@ export default {
 	},
 	methods: {
 		...mapActions(useBaseStore, ['showSnackbar']),
+		getProtocol,
 		zwaveDataRateToString,
 		checkMove(evt) {
 			const { futureIndex } = evt.draggedContext
@@ -547,13 +583,13 @@ export default {
 					? {
 							title: 'Data Rate',
 							text: protocolDataRate,
-					  }
+						}
 					: null,
 				routeSpeed
 					? {
 							title: 'Route Speed',
 							text: routeSpeed,
-					  }
+						}
 					: null,
 				{
 					title: 'Repeaters',
@@ -563,13 +599,13 @@ export default {
 					? {
 							title: 'Route failed between',
 							text: routeFailed,
-					  }
+						}
 					: null,
 			].filter((r) => !!r)
 		},
 		newWindow() {
 			const newwindow = window.open(
-				Routes.controllerChart + '#no-topbar',
+				'#' + Routes.controllerChart + '/#no-topbar',
 				'BG-RSSI-Chart',
 				'height=800,width=1200,status=no,toolbar:no,scrollbars:no,menubar:no', // check https://www.w3schools.com/jsref/met_win_open.asp for all available specs
 			)

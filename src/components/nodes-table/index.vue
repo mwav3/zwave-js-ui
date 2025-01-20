@@ -15,95 +15,110 @@
 		@input="managedNodes.selected = $event"
 		@click:row="toggleExpanded($event)"
 		item-key="id"
-		class="elevation-1"
+		class="elevation-1 nodes-table"
 		show-expand
 		show-select
+		:search="search"
+		style="margin-bottom: 50px; padding-bottom: 0 !important"
 	>
 		<template v-slot:top>
-			<v-row class="ma-2" justify-start>
-				<v-col cols="12">
-					<v-menu
-						v-model="headersMenu"
-						:close-on-content-click="false"
-						@input="
-							managedNodes.tableColumns =
-								managedNodes.tableColumns
-						"
-					>
-						<template v-slot:activator="{ on }">
-							<v-btn color="primary" outlined v-on="on">
-								<v-icon left small>table_chart</v-icon>
-								Columns
-							</v-btn>
-						</template>
-						<v-card>
-							<v-card-text>
-								<draggable
-									v-model="managedNodes.tableColumns"
-									handle=".handle"
-								>
-									<v-checkbox
-										v-for="col in managedNodes.tableColumns"
-										:key="col.name"
-										v-model="col.visible"
-										:value="col.visible"
-										hide-details
-										:label="
-											managedNodes.propDefs[col.name]
-												.label
-										"
-										:input-value="col.visible"
-										@change="col.visible = !!$event"
-									>
-										<template v-slot:prepend>
-											<v-icon
-												class="handle"
-												style="cursor: move"
-												>drag_indicator</v-icon
-											>
-										</template>
-									</v-checkbox>
-								</draggable>
-							</v-card-text>
-							<v-card-actions>
-								<v-btn
-									@click.native="
-										managedNodes.tableColumns =
-											managedNodes.initialTableColumns
+			<v-row class="my-4 ml-1" justify-start>
+				<v-text-field
+					v-model="search"
+					clearable
+					flat
+					solo-inverted
+					hide-details
+					single-line
+					class="ma-2"
+					style="max-width: 250px; min-width: 250px"
+					prepend-inner-icon="search"
+					label="Search"
+				></v-text-field>
+				<v-menu
+					v-model="headersMenu"
+					:close-on-content-click="false"
+					@input="
+						managedNodes.tableColumns = managedNodes.tableColumns
+					"
+				>
+					<template v-slot:activator="{ on }">
+						<v-btn
+							class="my-auto"
+							color="primary"
+							outlined
+							v-on="on"
+						>
+							<v-icon left small>table_chart</v-icon>
+							Columns
+						</v-btn>
+					</template>
+					<v-card>
+						<v-card-text>
+							<draggable
+								v-model="managedNodes.tableColumns"
+								handle=".handle"
+							>
+								<v-checkbox
+									v-for="col in managedNodes.tableColumns"
+									:key="col.name"
+									v-model="col.visible"
+									:value="col.visible"
+									hide-details
+									:label="
+										managedNodes.propDefs[col.name].label
 									"
-									>Reset</v-btn
+									:input-value="col.visible"
+									@change="col.visible = !!$event"
 								>
-							</v-card-actions>
-						</v-card>
-					</v-menu>
-					<v-tooltip bottom>
-						<template v-slot:activator="{ on }">
+									<template v-slot:prepend>
+										<v-icon
+											class="handle"
+											style="cursor: move"
+											>drag_indicator</v-icon
+										>
+									</template>
+								</v-checkbox>
+							</draggable>
+						</v-card-text>
+						<v-card-actions>
 							<v-btn
-								color="blue darken-1"
-								text
-								v-on="on"
 								@click.native="
-									managedNodes.setFilterToSelected()
+									managedNodes.tableColumns =
+										managedNodes.initialTableColumns
 								"
-								:disabled="managedNodes.selected.length === 0"
-								>Filter Selected</v-btn
+								>Reset</v-btn
 							>
-						</template>
-						<span>Show only selected nodes</span>
-					</v-tooltip>
-					<v-tooltip bottom>
-						<template v-slot:activator="{ on }">
-							<v-btn
-								color="blue darken-1"
-								text
-								v-on="on"
-								@click.native="managedNodes.reset()"
-								>Reset Table</v-btn
-							>
-						</template>
-						<span>Reset all table settings</span>
-					</v-tooltip>
-				</v-col>
+						</v-card-actions>
+					</v-card>
+				</v-menu>
+				<v-tooltip bottom>
+					<template v-slot:activator="{ on }">
+						<v-btn
+							color="blue darken-1"
+							class="my-auto"
+							text
+							v-on="on"
+							@click.native="managedNodes.setFilterToSelected()"
+							:disabled="managedNodes.selected.length === 0"
+							>Filter Selected</v-btn
+						>
+					</template>
+					<span>Show only selected nodes</span>
+				</v-tooltip>
+				<v-tooltip bottom>
+					<template v-slot:activator="{ on }">
+						<v-btn
+							color="blue darken-1"
+							class="my-auto"
+							text
+							v-on="on"
+							@click.native="managedNodes.reset()"
+							>Reset Table</v-btn
+						>
+					</template>
+					<span>Reset all table settings</span>
+				</v-tooltip>
 			</v-row>
 		</template>
 		<template
@@ -119,7 +134,7 @@
 					@change="managedNodes.setPropFilter(column.value, $event)"
 					@update:group-by="managedNodes.groupBy = $event"
 				></column-filter>
-				{{ header.text }}
+				<span style="padding-right: 1px">{{ header.text }}</span>
 			</span>
 		</template>
 		<template
@@ -139,10 +154,7 @@
 			<div class="d-flex">
 				<v-chip>{{ item.id.toString().padStart(3, '0') }}</v-chip>
 
-				<reinterview-badge
-					:node="item"
-					v-on="$listeners"
-				></reinterview-badge>
+				<reinterview-badge :node="item"></reinterview-badge>
 			</div>
 		</template>
 		<template v-slot:[`item.minBatteryLevel`]="{ item }">
@@ -183,6 +195,19 @@
 				:value="richValue(item, 'zwavePlusVersion')"
 			/>
 			<div v-else></div>
+		</template>
+		<template v-slot:[`item.protocol`]="{ item }">
+			<rich-value
+				v-if="!item.isControllerNode"
+				:value="richValue(item, 'protocol')"
+			/>
+			<div class="d-flex" v-else>
+				<rich-value class="mr-1" :value="getProtocolIcon(false)" />
+				<rich-value
+					v-if="item.supportsLongRange"
+					:value="getProtocolIcon(true)"
+				/>
+			</div>
 		</template>
 		<template v-slot:[`item.failed`]="{ item }">
 			<rich-value
@@ -275,9 +300,11 @@
 				<div
 					style="white-space: pre"
 					v-text="
-						`FW: v${item.firmwareVersion}${
-							item.sdkVersion ? `\nSDK: v${item.sdkVersion}` : ''
-						}`
+						`${
+							item.firmwareVersion
+								? 'FW: v' + item.firmwareVersion
+								: '-----'
+						}${item.sdkVersion ? `\nSDK: v${item.sdkVersion}` : ''}`
 					"
 					v-else
 				></div>
@@ -293,7 +320,6 @@
 					:isMobile="isMobile"
 					:node="item"
 					:socket="socket"
-					v-on="$listeners"
 				/>
 			</td>
 		</template>
@@ -301,3 +327,18 @@
 </template>
 <script src="./nodes-table.js"></script>
 <style scoped src="./nodes-table.css"></style>
+<style>
+.nodes-table {
+	table {
+		tr {
+			th {
+				white-space: nowrap;
+			}
+			th,
+			td {
+				padding: 0 8px !important;
+			}
+		}
+	}
+}
+</style>

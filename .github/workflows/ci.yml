@@ -16,24 +16,24 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [16.x, 18.x, 20.x]
+        node-version: [18.x, 20.x, 22.x]
 
     steps:
       - name: Checkout Z-Wave JS UI
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3.4.1
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'yarn'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: yarn install --immutable
+        run: npm ci
 
       - name: Lint
         if: matrix['node-version'] == '18.x'
-        run: yarn run lint
+        run: npm run lint
 
       - name: Prepare lint auto-fix patch
         if: |
@@ -43,7 +43,7 @@ jobs:
         id: lint
         run: |
           # Run all lint commands and abort if one has unfixable errors
-          yarn run lint-fix
+          npm run lint-fix
           git diff --name-only || true
           if ! git diff --quiet ; then
             echo "has changes"
@@ -59,19 +59,19 @@ jobs:
           failure() &&
           github.event_name == 'pull_request' &&
           steps.lint.outputs.changed == 'true'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: lint-fix
           path: fix.patch
 
       - name: Test
-        run: yarn run test
+        run: npm run test
 
       - name: Generate coverage report
         if: matrix['node-version'] == '18.x'
         run: |
-          yarn run coverage
-          yarn run record-coverage
+          npm run coverage
+          npm run record-coverage
 
       - name: Coveralls
         uses: coverallsapp/github-action@master

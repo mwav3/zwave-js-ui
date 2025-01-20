@@ -212,18 +212,7 @@
 										v-model="s.values.inclusionMode"
 										mandatory
 									>
-										<v-alert
-											dense
-											border="left"
-											type="warning"
-											v-if="missingKeys.length > 0"
-										>
-											Some security keys are missing:
-											<strong>{{
-												missingKeys.join(', ')
-											}}</strong
-											>. Please check your zwave settings.
-										</v-alert>
+										<missing-keys-alert />
 										<v-radio
 											:value="InclusionStrategy.Default"
 										>
@@ -697,6 +686,9 @@ export default {
 	props: {
 		socket: Object,
 	},
+	components: {
+		MissingKeysAlert: () => import('../custom/MissingKeysAlert.vue'),
+	},
 	mixins: [InstancesMixin],
 	data() {
 		return {
@@ -798,23 +790,6 @@ export default {
 		},
 		controllerStatus() {
 			return this.appInfo.controllerStatus?.status
-		},
-		missingKeys() {
-			const keys = this.zwave.securityKeys || {}
-
-			const requiredKeys = [
-				'S2_Unauthenticated',
-				'S2_Authenticated',
-				'S2_AccessControl',
-				'S0_Legacy',
-			]
-			const missing = []
-			for (const key of requiredKeys) {
-				if (!keys[key] || keys[key].length !== 32) {
-					missing.push(key)
-				}
-			}
-			return missing
 		},
 	},
 	watch: {
@@ -1052,7 +1027,7 @@ export default {
 		},
 		changeStep(index) {
 			if (index <= 1) {
-				this.init(false) // calling it without the bind parameter will not touch events
+				this.init() // calling it without the bind parameter will not touch events
 			} else {
 				this.steps = this.steps.slice(0, index)
 			}
@@ -1201,10 +1176,19 @@ export default {
 				this.pushStep('replaceInclusionMode')
 			}
 		},
-		show(step) {
+		async show(stepOrStepsValues) {
 			this.isOpen = true
 			this.$emit('open')
-			this.init(true, step)
+			if (typeof stepOrStepsValues === 'object') {
+				this.init(true)
+				this.steps = []
+				for (const s in stepOrStepsValues) {
+					const step = await this.pushStep(s)
+					Object.assign(step.values, stepOrStepsValues[s])
+				}
+			} else {
+				this.init(true, stepOrStepsValues)
+			}
 		},
 		close() {
 			this.isOpen = false
@@ -1241,7 +1225,7 @@ export default {
 				this.commandTimer = null
 			}
 
-			if (bind) {
+			if (bind && Object.keys(this.bindedSocketEvents).length === 0) {
 				this.bindEvent(
 					'grantSecurityClasses',
 					this.onGrantSecurityCC.bind(this),
@@ -1258,9 +1242,12 @@ export default {
 				typeof step === 'string' ? this.availableSteps[step] : step
 			s.index = this.steps.length + 1
 			this.alert = null
-			this.steps.push(copy(s))
+			const newStep = copy(s)
+			this.steps.push(newStep)
 			await this.$nextTick()
-			this.currentStep = s.index
+			this.currentStep = newStep.index
+
+			return newStep
 		},
 		stopAction() {
 			this.stopped = true
@@ -1291,7 +1278,7 @@ export default {
 				// done
 			} else {
 				if (api === 'replaceFailedNode') {
-					this.init(false)
+					this.init()
 				}
 			}
 		},
@@ -1345,7 +1332,7 @@ export default {
 				const doneStep = copy(this.availableSteps.done)
 				doneStep.text = `Node ${
 					this.nodeFound.id
-				} added with security "${this.nodeFound.security || 'None'}"`
+				} added with security ${this.nodeFound.security || 'None'}`
 				doneStep.error = result.lowSecurityReason
 					? this.getSecurityBootstrapError(result.lowSecurityReason)
 					: false

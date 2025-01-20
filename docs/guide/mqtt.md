@@ -1913,6 +1913,29 @@ Payload:
 
 </details>
 
+#### `dumpNode`
+
+```ts
+dumpNode(nodeId: number): import("/home/daniel/GitProjects/zwave-js-ui/node_modules/zwave-js/build/lib/node/Dump").NodeDump;
+```
+
+<details>
+<summary>Mqtt usage</summary>
+
+Topic: `zwave/_CLIENTS/ZWAVE_GATEWAY-<mqtt_name>/api/dumpNode/set`
+
+Payload:
+
+```json
+{
+	"args": [
+		nodeId
+	]
+}
+```
+
+</details>
+
 #### `beginRebuildingRoutes`
 
 ```ts
@@ -2037,7 +2060,11 @@ Payload:
 #### `writeBroadcast`
 
 ```ts
-async writeBroadcast(valueId: ValueID, value: unknown): Promise<void>;
+async writeBroadcast(
+	valueId: ValueID,
+	value: unknown,
+	options?: SetValueAPIOptions,
+): Promise<void>;
 ```
 
 Send broadcast write request.
@@ -2053,7 +2080,8 @@ Payload:
 {
 	"args": [
 		valueId,
-		value
+		value,
+		options
 	]
 }
 ```
@@ -2063,7 +2091,12 @@ Payload:
 #### `writeMulticast`
 
 ```ts
-async writeMulticast(nodes: number[], valueId: ZUIValueId, value: unknown): Promise<void>;
+async writeMulticast(
+	nodes: number[],
+	valueId: ZUIValueId,
+	value: unknown,
+	options?: SetValueAPIOptions,
+): Promise<void>;
 ```
 
 Send multicast write request to a group of nodes.
@@ -2080,7 +2113,8 @@ Payload:
 	"args": [
 		nodes,
 		valueId,
-		value
+		value,
+		options
 	]
 }
 ```
@@ -2407,7 +2441,7 @@ Will work in the same way.
 
 If you would like to send a write request with options like `transitionDurtation` and `volume` you can do it by using a JSON payload:
 
-Topic: `zwave/office/light/38/0/targetValue`
+Topic: `zwave/office/light/38/0/targetValue/set`
 
 Payload:
 

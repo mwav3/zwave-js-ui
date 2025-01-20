@@ -1,10 +1,13 @@
 // eslint-disable-next-line one-var
-import * as appRoot from 'app-root-path'
-import { version } from '../package.json'
-import { ValueID } from 'zwave-js'
-import path from 'path'
+import { PartialZWaveOptions, ValueID, ZnifferOptions } from 'zwave-js'
+import path, { resolve } from 'path'
 import crypto from 'crypto'
 import { readFileSync } from 'fs'
+import type { ZwaveConfig } from './ZwaveClient'
+
+// don't use import here, it will break the build
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const pkgJson = require('../../package.json')
 
 let VERSION: string
 
@@ -17,8 +20,8 @@ export type DeepPartial<T> = {
 	[P in keyof T]?: T[P] extends Array<infer U>
 		? Array<DeepPartial<U>>
 		: T[P] extends ReadonlyArray<infer U>
-		? ReadonlyArray<DeepPartial<U>>
-		: DeepPartial<T[P]>
+			? ReadonlyArray<DeepPartial<U>>
+			: DeepPartial<T[P]>
 }
 
 export interface ErrnoException extends Error {
@@ -77,13 +80,18 @@ export function fileDate(date?: Date) {
 	return date.toISOString().slice(-24).replace(/\D/g, '').slice(0, 14)
 }
 
+/** Where package.json is */
+export const basePath = __filename.endsWith('index.js')
+	? resolve(__dirname) // esbuild bundle
+	: resolve(__dirname, '..', '..')
+
 /**
  *  Get the base root path to application directory. When we are in a `pkg` environment
  *  the path of the snapshot is not writable
  */
 export function getPath(write: boolean): string {
 	if (write && hasProperty(process, 'pkg')) return process.cwd()
-	else return appRoot.toString()
+	else return basePath
 }
 
 /**
@@ -167,9 +175,11 @@ export function getVersion(): string {
 					.trim()
 			}
 
-			VERSION = `${version}${rev ? '.' + rev.substring(0, 7) : ''}`
+			VERSION = `${pkgJson.version}${
+				rev ? '.' + rev.substring(0, 7) : ''
+			}`
 		} catch {
-			VERSION = version
+			VERSION = pkgJson.version
 		}
 	}
 
@@ -271,9 +281,9 @@ export function bufferFromHex(hex: string): Buffer {
 /**
  * Converts a buffer to an hex string
  */
-export function buffer2hex(buffer: Buffer): string {
+export function buffer2hex(buffer: Uint8Array): string {
 	if (buffer.length === 0) return ''
-	return `0x${buffer.toString('hex')}`
+	return `0x${Buffer.from(buffer.buffer).toString('hex')}`
 }
 
 export function allSettled(promises: Promise<any>[]): Promise<any> {
@@ -301,4 +311,75 @@ export function parseJSON(str: string): any {
 		}
 		return v
 	})
+}
+
+export function parseSecurityKeys(
+	config: ZwaveConfig,
+	options: PartialZWaveOptions | ZnifferOptions,
+): void {
+	config.securityKeys = config.securityKeys || {}
+
+	if (process.env.NETWORK_KEY) {
+		config.securityKeys.S0_Legacy = process.env.NETWORK_KEY
+	}
+
+	const availableKeys = [
+		'S2_Unauthenticated',
+		'S2_Authenticated',
+		'S2_AccessControl',
+		'S0_Legacy',
+	]
+	const availableLongRangeKeys = ['S2_Authenticated', 'S2_AccessControl']
+
+	const envKeys = Object.keys(process.env)
+		.filter((k) => k?.startsWith('KEY_'))
+		.map((k) => k.substring(4))
+
+	const longRangeEnvKeys = Object.keys(process.env)
+		.filter((k) => k?.startsWith('KEY_LR_'))
+		.map((k) => k.substring(7))
+
+	// load security keys from env
+	for (const k of envKeys) {
+		if (availableKeys.includes(k)) {
+			config.securityKeys[k] = process.env[`KEY_${k}`]
+		}
+	}
+	// load long range security keys from env
+	for (const k of longRangeEnvKeys) {
+		if (availableLongRangeKeys.includes(k)) {
+			config.securityKeysLongRange[k] = process.env[`KEY_LR_${k}`]
+		}
+	}
+
+	options.securityKeys = {}
+	options.securityKeysLongRange = {}
+
+	// convert security keys to buffer
+	for (const key in config.securityKeys) {
+		if (
+			availableKeys.includes(key) &&
+			config.securityKeys[key].length === 32
+		) {
+			options.securityKeys[key] = Buffer.from(
+				config.securityKeys[key],
+				'hex',
+			)
+		}
+	}
+
+	config.securityKeysLongRange = config.securityKeysLongRange || {}
+
+	// convert long range security keys to buffer
+	for (const key in config.securityKeysLongRange) {
+		if (
+			availableLongRangeKeys.includes(key) &&
+			config.securityKeysLongRange[key].length === 32
+		) {
+			options.securityKeysLongRange[key] = Buffer.from(
+				config.securityKeysLongRange[key],
+				'hex',
+			)
+		}
+	}
 }

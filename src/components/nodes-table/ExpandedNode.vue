@@ -174,16 +174,12 @@
 					key="homeassistant"
 					transition="slide-y-transition"
 				>
-					<home-assistant
-						:node="node"
-						:socket="socket"
-						v-on="$listeners"
-					/>
+					<home-assistant :node="node" :socket="socket" />
 				</v-tab-item>
 
 				<!-- TAB GROUPS -->
 				<v-tab-item key="groups" transition="slide-y-transition">
-					<association-groups :node="node" v-on="$listeners" />
+					<association-groups :node="node" />
 				</v-tab-item>
 
 				<!-- TAB USERS -->
@@ -201,11 +197,7 @@
 					key="ota"
 					transition="slide-y-transition"
 				>
-					<OTAUpdates
-						:node="node"
-						:socket="socket"
-						v-on="$listeners"
-					/>
+					<OTAUpdates :node="node" :socket="socket" />
 				</v-tab-item>
 
 				<!-- TAB EVENTS -->
@@ -222,10 +214,10 @@
 							clearable
 						>
 							<template slot="append-outer">
-								<v-tooltip bottom>
+								<v-tooltip v-if="!inverseSort" bottom>
 									<template v-slot:activator="{ on, attrs }">
 										<v-btn
-											@click="toggleAutoScroll"
+											@click="toggleAutoScroll()"
 											icon
 											:color="autoScroll ? 'primary' : ''"
 											:class="
@@ -241,6 +233,28 @@
 									</template>
 									<span>Enable/Disable auto scroll</span>
 								</v-tooltip>
+
+								<v-tooltip bottom>
+									<template v-slot:activator="{ on, attrs }">
+										<v-btn
+											@click="toggleSort()"
+											icon
+											:color="
+												inverseSort ? 'primary' : ''
+											"
+											:class="
+												inverseSort
+													? 'border-primary'
+													: ''
+											"
+											v-bind="attrs"
+											v-on="on"
+										>
+											<v-icon>swap_vert</v-icon>
+										</v-btn>
+									</template>
+									<span>Inverse Sort</span>
+								</v-tooltip>
 							</template>
 						</v-text-field>
 
@@ -252,7 +266,7 @@
 							>
 								<span
 									><i>{{
-										new Date(event.time).toISOString()
+										getDateTimeString(event.time)
 									}}</i></span
 								>
 								-
@@ -314,6 +328,7 @@ import {
 	SetValueStatus,
 	setValueWasUnsupervisedOrSucceeded,
 } from '@zwave-js/cc/safe'
+import { Protocols } from '@zwave-js/core/safe'
 
 export default {
 	props: {
@@ -340,6 +355,11 @@ export default {
 	},
 	computed: {
 		...mapState(useBaseStore, ['gateway', 'mqtt']),
+		isLongRange() {
+			if (!this.node) return false
+
+			return this.node.protocol === Protocols.ZWaveLongRange
+		},
 		nodeMetadata() {
 			return this.node.deviceConfig?.metadata
 		},
@@ -349,7 +369,13 @@ export default {
 			return Array.isArray(comments) ? comments : [comments]
 		},
 		metaKeys() {
-			const helpKeys = ['manual', 'inclusion', 'exclusion', 'reset']
+			const helpKeys = [
+				'manual',
+				'inclusion',
+				'exclusion',
+				'reset',
+				'wakeup',
+			]
 			const keys = this.nodeMetadata ? Object.keys(this.nodeMetadata) : []
 
 			return keys.filter((key) => helpKeys.includes(key))
@@ -372,18 +398,37 @@ export default {
 			return this.showStatistics ? 'border-primary' : ''
 		},
 		filteredNodeEvents() {
-			return this.node.eventsQueue.filter((event) => {
-				return (
-					!this.searchEvents ||
-					JSON.stringify(event)
-						.toLowerCase()
-						.includes(this.searchEvents.toLowerCase())
-				)
-			})
+			return this.node.eventsQueue
+				.filter((event) => {
+					return (
+						!this.searchEvents ||
+						JSON.stringify(event)
+							.toLowerCase()
+							.includes(this.searchEvents.toLowerCase())
+					)
+				})
+				.sort((a, b) => {
+					a = new Date(a.time)
+					b = new Date(b.time)
+					return this.inverseSort ? b - a : a - b
+				})
 		},
 		advancedActions() {
 			const nodeActions = this.node.isControllerNode
-				? []
+				? [
+						{
+							text: 'Firmware update OTW',
+							options: [
+								{
+									name: 'Update',
+									action: 'firmwareUpdateOTW',
+								},
+							],
+							icon: 'update',
+							color: 'red',
+							desc: 'Perform a firmware update OTW (Over The Wire)',
+						},
+					]
 				: [
 						{
 							text: 'Firmware update',
@@ -399,21 +444,6 @@ export default {
 							],
 							icon: 'update',
 							desc: 'Start/Stop a firmware update',
-						},
-						{
-							text: 'Rebuild Routes',
-							options: [
-								{
-									name: 'Rebuild',
-									action: 'rebuildNodeRoutes',
-									args: {
-										confirm:
-											'Rebuilding node routes causes a lot of traffic, can take minutes up to hours and you can expect degraded performance while it is going on',
-									},
-								},
-							],
-							icon: 'healing',
-							desc: 'Discover and assign new routes from node to the controller and other nodes.',
 						},
 						{
 							text: 'Refresh Values',
@@ -445,11 +475,33 @@ export default {
 							text: 'Failed Nodes',
 							options: [
 								{ name: 'Remove', action: 'removeFailedNode' },
+								{
+									name: 'Replace',
+									action: 'replaceFailedNode',
+								},
 							],
 							icon: 'dangerous',
 							desc: 'Manage nodes that are dead and/or marked as failed with the controller',
 						},
-				  ]
+					]
+
+			if (this.node.protocol !== Protocols.ZWaveLongRange) {
+				nodeActions.splice(1, 0, {
+					text: 'Rebuild Routes',
+					options: [
+						{
+							name: 'Rebuild',
+							action: 'rebuildNodeRoutes',
+							args: {
+								confirm:
+									'Rebuilding node routes causes a lot of traffic, can take minutes up to hours and you can expect degraded performance while it is going on',
+							},
+						},
+					],
+					icon: 'healing',
+					desc: 'Discover and assign new routes from node to the controller and other nodes.',
+				})
+			}
 
 			const nodeAssociation = this.node.isControllerNode
 				? []
@@ -462,7 +514,7 @@ export default {
 									"This action will remove all associations of this node. This will also clear lifeline association with controller node, the node won't report state changes until that is set up again",
 							},
 						},
-				  ]
+					]
 
 			const CCActions = []
 
@@ -483,7 +535,10 @@ export default {
 			return [
 				{
 					text: 'Export json',
-					options: [{ name: 'Export', action: 'exportNode' }],
+					options: [
+						{ name: 'UI', action: 'exportNode' },
+						{ name: 'Driver', action: 'dumpNode' },
+					],
 					icon: 'get_app',
 					desc: 'Export this node in a json file',
 				},
@@ -547,18 +602,46 @@ export default {
 		currentTab() {
 			this.scrollBottom()
 		},
+		inverseSort() {
+			this.savePreferences()
+		},
+		autoScroll() {
+			this.savePreferences()
+		},
 	},
 	data() {
 		return {
 			currentTab: 0,
 			autoScroll: true,
+			inverseSort: true,
 			searchEvents: '',
 			advancedShowDialog: false,
 			showStatistics: false,
 		}
 	},
+	mounted() {
+		const pref = useBaseStore().getPreference('eventsList', {
+			inverseSort: true,
+			autoScroll: true,
+		})
+
+		this.inverseSort = pref.inverseSort
+		this.autoScroll = pref.autoScroll
+	},
 	methods: {
-		...mapActions(useBaseStore, ['showSnackbar', 'setValue']),
+		...mapActions(useBaseStore, [
+			'showSnackbar',
+			'setValue',
+			'getDateTimeString',
+		]),
+		savePreferences() {
+			useBaseStore().savePreferences({
+				eventsList: {
+					inverseSort: this.inverseSort,
+					autoScroll: this.autoScroll,
+				},
+			})
+		},
 		async updateValue(v, customValue) {
 			if (v) {
 				// in this way I can check when the value receives an update
@@ -630,7 +713,7 @@ export default {
 			var urlRegex =
 				/(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#/%?=~_|!:,.;]*[-A-Z0-9+&@#/%=~_|])/gi
 			return text.replace(urlRegex, function (url) {
-				return '<a href="' + url + '">' + url + '</a>'
+				return '<a target="_blank" href="' + url + '">' + url + '</a>'
 			})
 		},
 		copyText() {
@@ -645,18 +728,22 @@ export default {
 			} else if (args.mqtt) {
 				this.sendMqttAction(action, args.confirm)
 			} else {
-				this.$emit('action', action, { ...args, nodeId: this.node.id })
+				this.sendAction(action, { ...args, nodeId: this.node.id })
 			}
 		},
 		exportNode() {
-			this.$listeners.export(this.node, 'node_' + this.node.id, 'json')
+			this.app.exportConfiguration(
+				this.node,
+				'node_' + this.node.id,
+				'json',
+			)
 		},
 		async sendMqttAction(action, confirmMessage) {
 			if (this.node) {
 				let ok = true
 
 				if (confirmMessage) {
-					ok = await this.$listeners.showConfirm(
+					ok = await this.app.confirm(
 						'Info',
 						confirmMessage,
 						'info',
@@ -698,8 +785,11 @@ export default {
 		toggleAutoScroll() {
 			this.autoScroll = !this.autoScroll
 		},
+		toggleSort() {
+			this.inverseSort = !this.inverseSort
+		},
 		async scrollBottom() {
-			if (!this.autoScroll) {
+			if (!this.autoScroll || this.inverseSort) {
 				return
 			}
 			const el = this.$refs.eventsList
